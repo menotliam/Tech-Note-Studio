@@ -106,7 +106,7 @@ export async function signupAction(
 
   return {
     status: "success",
-    message: "Account created. Check your email to confirm your sign up, then log in."
+    message: "If this email can be used, you will receive a confirmation link."
   };
 }
 

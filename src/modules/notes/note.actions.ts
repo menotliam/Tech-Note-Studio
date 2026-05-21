@@ -1,0 +1,147 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createEditorDocumentFromPlainText, emptyEditorDocument } from "@/modules/editor/editor-documents";
+import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
+import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
+import { noteIdSchema, updateNoteSchema } from "./note.schemas";
+
+async function getAuthedFoundation() {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  const { workspaceId } = await ensureUserFoundation(supabase, user);
+
+  if (!workspaceId) {
+    throw new Error("Default workspace is missing.");
+  }
+
+  return {
+    supabase,
+    user,
+    workspaceId
+  };
+}
+
+export async function createBlankNoteAction() {
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const contentText = extractPlainTextFromEditorJson(emptyEditorDocument);
+
+  const { data, error } = await supabase
+    .from("notes")
+    .insert({
+      workspace_id: workspaceId,
+      owner_id: user.id,
+      title: "Untitled",
+      content_json: emptyEditorDocument,
+      content_text: contentText,
+      schema_version: 1
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  redirect(`/notes/${data.id}`);
+}
+
+export async function updateNoteAction(formData: FormData) {
+  const parsed = updateNoteSchema.safeParse({
+    noteId: formData.get("noteId"),
+    title: formData.get("title"),
+    body: formData.get("body")
+  });
+
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid note input.");
+  }
+
+  const { supabase, user } = await getAuthedFoundation();
+  const contentJson = createEditorDocumentFromPlainText(parsed.data.body);
+  const contentText = extractPlainTextFromEditorJson(contentJson);
+
+  const { error } = await supabase
+    .from("notes")
+    .update({
+      title: parsed.data.title,
+      content_json: contentJson,
+      content_text: contentText,
+      schema_version: 1,
+      last_synced_at: new Date().toISOString()
+    })
+    .eq("id", parsed.data.noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath(`/notes/${parsed.data.noteId}`);
+}
+
+export async function togglePinNoteAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const isPinned = formData.get("isPinned") === "true";
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ is_pinned: !isPinned })
+    .eq("id", noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath(`/notes/${noteId}`);
+}
+
+export async function archiveNoteAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ is_archived: true })
+    .eq("id", noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  redirect("/");
+}
+
+export async function deleteNoteAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  redirect("/");
+}

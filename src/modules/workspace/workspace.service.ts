@@ -37,6 +37,8 @@ export async function ensureUserFoundation(
     }
   }
 
+  let workspaceId: string | null = null;
+
   const { data: existingWorkspace, error: workspaceLookupError } = await supabase
     .from("workspaces")
     .select("id")
@@ -48,16 +50,24 @@ export async function ensureUserFoundation(
     throw workspaceLookupError;
   }
 
-  if (!existingWorkspace) {
-    const { error } = await supabase.from("workspaces").insert({
-      owner_id: user.id,
-      name: "Personal Workspace",
-      is_default: true
-    });
+  if (existingWorkspace) {
+    workspaceId = existingWorkspace.id;
+  } else {
+    const { data, error } = await supabase
+      .from("workspaces")
+      .insert({
+        owner_id: user.id,
+        name: "Personal Workspace",
+        is_default: true
+      })
+      .select("id")
+      .single();
 
     if (error) {
       throw error;
     }
+
+    workspaceId = data.id;
   }
 
   const { data: existingPreferences, error: preferencesLookupError } = await supabase
@@ -80,4 +90,8 @@ export async function ensureUserFoundation(
       throw preferencesError;
     }
   }
+
+  return {
+    workspaceId
+  };
 }
