@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 42 27% 97%;
+  --foreground: 220 18% 12%;
+  --border: 220 13% 88%;
+  --muted: 210 20% 94%;
+  --muted-foreground: 220 9% 42%;
+  --surface: 0 0% 100%;
+  --primary: 188 78% 27%;
+  --primary-foreground: 0 0% 100%;
+  --accent: 40 89% 58%;
+  --accent-foreground: 220 18% 12%;
+}
+
+.dark {
+  --background: 220 18% 10%;
+  --foreground: 42 27% 96%;
+  --border: 218 14% 24%;
+  --muted: 218 15% 18%;
+  --muted-foreground: 220 10% 70%;
+  --surface: 220 16% 14%;
+  --primary: 185 68% 45%;
+  --primary-foreground: 220 18% 10%;
+  --accent: 40 89% 58%;
+  --accent-foreground: 220 18% 12%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
