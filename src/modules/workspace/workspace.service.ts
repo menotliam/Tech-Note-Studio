@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { ensureUserPreferences } from "@/modules/preferences/preferences.service";
 
 const defaultEditorPreferences = {
   auto_detection_enabled: true,
@@ -90,6 +91,8 @@ export async function ensureUserFoundation(
       throw preferencesError;
     }
   }
+
+  await ensureUserPreferences(supabase, user.id);
 
   return {
     workspaceId
