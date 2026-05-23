@@ -124,6 +124,9 @@ function renderBlock(writer: PdfWriter, block: ExportBlock) {
       writer.text(block.language.toUpperCase(), { font: "F2", size: 8, gapAfter: 4 });
       writer.text(block.code, { font: "F4", size: 9, preserveNewlines: true, gapAfter: 12 });
       break;
+    case "image":
+      writer.text(`[Image: ${block.alt || block.src}]`, { font: "F3", size: 10, gapAfter: 10 });
+      break;
     case "table":
       writer.table(block.rows, { font: "F1", size: 9, gapAfter: 12 });
       break;

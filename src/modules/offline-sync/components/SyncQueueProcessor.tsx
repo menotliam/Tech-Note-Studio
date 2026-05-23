@@ -2,6 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
+import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import {
   deleteSyncOperation,
   enqueueSyncOperation,
@@ -68,13 +70,14 @@ async function processSyncQueue() {
       continue;
     }
 
+    const contentJson = sanitizeEditorDocument(note.contentJson);
     const { error } = await supabase
       .from("notes")
       .update({
         title: note.title,
-        content_json: note.contentJson,
-        content_text: note.contentText,
-        schema_version: note.contentJson.schemaVersion ?? 1,
+        content_json: contentJson,
+        content_text: extractPlainTextFromEditorJson(contentJson),
+        schema_version: contentJson.schemaVersion ?? 1,
         last_synced_at: new Date().toISOString()
       })
       .eq("id", note.noteId)

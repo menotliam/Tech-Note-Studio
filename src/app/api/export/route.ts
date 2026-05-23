@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
 import type { EditorDocument } from "@/modules/editor/editor.types";
 import { editorDocumentToExportDocument, exportDocumentsToBundle } from "@/modules/export/export.renderer";
 import { exportNotesSchema } from "@/modules/export/export.schemas";
 import { generateDocx, generateDocxBundle } from "@/modules/export/generators/docx.generator";
 import { generatePdf, generatePdfBundle } from "@/modules/export/generators/pdf.generator";
 import { generateZip } from "@/modules/export/generators/zip.generator";
+import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
 type ExportNoteRow = {
   id: string;
@@ -16,18 +18,13 @@ type ExportNoteRow = {
 
 type ExportDocumentForDownload = ReturnType<typeof editorDocumentToExportDocument>;
 
+const exportRateLimitWindowMs = 60_000;
+const exportRateLimitMaxRequests = 10;
+const exportRateLimitBuckets = new Map<string, number[]>();
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
-  const parsed = exportNotesSchema.safeParse({
-    noteIds: getRequestedNoteIds(requestUrl),
-    format: requestUrl.searchParams.get("format"),
-    mode: requestUrl.searchParams.get("mode") ?? undefined
-  });
-
-  if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid export request." }, { status: 400 });
-  }
-
+  const requestContext = getSecurityRequestContext(request);
   const supabase = await createSupabaseServerClient();
   const {
     data: { user }
@@ -35,6 +32,34 @@ export async function GET(request: NextRequest) {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+
+  const parsed = exportNotesSchema.safeParse({
+    noteIds: getRequestedNoteIds(requestUrl),
+    format: requestUrl.searchParams.get("format"),
+    mode: requestUrl.searchParams.get("mode") ?? undefined
+  });
+
+  if (!parsed.success) {
+    await logSecurityEvent(supabase, {
+      userId: user.id,
+      eventType: "INVALID_EXPORT_REQUEST",
+      severity: "warning",
+      ...requestContext,
+      metadata: { issues: parsed.error.issues.map((issue) => issue.message) }
+    });
+    return NextResponse.json({ error: "Invalid export request." }, { status: 400 });
+  }
+
+  if (!consumeExportRateLimit(user.id)) {
+    await logSecurityEvent(supabase, {
+      userId: user.id,
+      eventType: "INVALID_EXPORT_REQUEST",
+      severity: "warning",
+      ...requestContext,
+      metadata: { reason: "rate_limited" }
+    });
+    return NextResponse.json({ error: "Too many export requests." }, { status: 429 });
   }
 
   const uniqueNoteIds = [...new Set(parsed.data.noteIds)];
@@ -51,6 +76,18 @@ export async function GET(request: NextRequest) {
   }
 
   if (!notes || notes.length !== uniqueNoteIds.length) {
+    await logSecurityEvent(supabase, {
+      userId: user.id,
+      eventType: "EXPORT_ACCESS_DENIED",
+      severity: "warning",
+      ...requestContext,
+      metadata: {
+        requestedNoteCount: uniqueNoteIds.length,
+        returnedNoteCount: notes?.length ?? 0,
+        mode: parsed.data.mode ?? "bundle",
+        format: parsed.data.format
+      }
+    });
     return NextResponse.json({ error: "One or more notes were not found." }, { status: 404 });
   }
 
@@ -74,7 +111,9 @@ export async function GET(request: NextRequest) {
     .single();
 
   try {
-    const exportDocuments = exportNotes.map((note) => editorDocumentToExportDocument(note.title, note.content_json));
+    const exportDocuments = exportNotes.map((note) =>
+      editorDocumentToExportDocument(note.title, sanitizeEditorDocument(note.content_json))
+    );
     const exportBundle = exportDocumentsToBundle(exportDocuments);
     const file =
       parsed.data.mode === "zip"
@@ -109,6 +148,14 @@ export async function GET(request: NextRequest) {
       }
     });
   } catch (error) {
+    await logSecurityEvent(supabase, {
+      userId: user.id,
+      eventType: "EXPORT_FAILED",
+      severity: "warning",
+      ...requestContext,
+      metadata: { message: error instanceof Error ? error.message : "Export failed." }
+    });
+
     if (exportJob?.id) {
       await supabase
         .from("export_jobs")
@@ -123,6 +170,20 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ error: "Export failed." }, { status: 500 });
   }
+}
+
+function consumeExportRateLimit(userId: string) {
+  const now = Date.now();
+  const bucket = exportRateLimitBuckets.get(userId)?.filter((timestamp) => now - timestamp < exportRateLimitWindowMs) ?? [];
+
+  if (bucket.length >= exportRateLimitMaxRequests) {
+    exportRateLimitBuckets.set(userId, bucket);
+    return false;
+  }
+
+  bucket.push(now);
+  exportRateLimitBuckets.set(userId, bucket);
+  return true;
 }
 
 function createSafeFilename(title: string, format: "pdf" | "docx") {

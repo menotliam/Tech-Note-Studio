@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createEditorDocumentFromPlainText, emptyEditorDocument } from "@/modules/editor/editor-documents";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
+import { logSecurityEvent } from "@/modules/security/security.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
 import { noteIdSchema, updateNoteSchema } from "./note.schemas";
 
@@ -74,7 +75,7 @@ export async function updateNoteAction(formData: FormData) {
   const contentJson = parsed.data.contentJson
     ? parseEditorDocumentJson(parsed.data.contentJson)
     : createEditorDocumentFromPlainText(parsed.data.body ?? "");
-  const contentText = parsed.data.contentText ?? extractPlainTextFromEditorJson(contentJson);
+  const contentText = extractPlainTextFromEditorJson(contentJson);
 
   const { error } = await supabase
     .from("notes")
@@ -89,6 +90,12 @@ export async function updateNoteAction(formData: FormData) {
     .eq("owner_id", user.id);
 
   if (error) {
+    await logSecurityEvent(supabase, {
+      userId: user.id,
+      eventType: "NOTE_UPDATE_FAILED",
+      severity: "warning",
+      metadata: { noteId: parsed.data.noteId, message: error.message }
+    });
     throw error;
   }
 

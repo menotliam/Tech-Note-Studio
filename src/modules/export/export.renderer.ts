@@ -45,6 +45,18 @@ function nodeToExportBlocks(node: EditorNode | EditorTextNode): ExportBlock[] {
           code: getNodeText(node)
         }
       ];
+    case "image":
+      if (typeof node.attrs?.src !== "string" || !node.attrs.src) {
+        return [];
+      }
+
+      return [
+        {
+          type: "image",
+          src: node.attrs.src,
+          alt: typeof node.attrs?.alt === "string" ? node.attrs.alt : "Image"
+        }
+      ];
     case "bulletList":
     case "orderedList":
       return [

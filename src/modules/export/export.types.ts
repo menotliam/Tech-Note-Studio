@@ -18,4 +18,5 @@ export type ExportBlock =
   | { type: "quote"; text: string }
   | { type: "divider" }
   | { type: "code"; language: string; code: string }
+  | { type: "image"; src: string; alt: string }
   | { type: "table"; rows: string[][] };

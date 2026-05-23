@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EditorContent, type JSONContent, useEditor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
+import TiptapImage from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table } from "@tiptap/extension-table";
@@ -21,6 +21,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Image as ImageIcon,
   Italic,
   List,
   ListOrdered,
@@ -53,8 +54,11 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
   const [contentJson, setContentJson] = useState(() => serializeContent(tiptapContent));
   const [contentText, setContentText] = useState(() => extractPlainTextFromEditorJson(initialContent));
   const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(true);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
   const cacheTimerRef = useRef<number | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [pasteSuggestion, setPasteSuggestion] = useState<{
     text: string;
     from: number;
@@ -104,7 +108,7 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
       TableRow,
       TableHeader,
       TableCell,
-      Image.configure({
+      TiptapImage.configure({
         allowBase64: false
       })
     ],
@@ -254,7 +258,42 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
         >
           <Table2 size={15} />
         </ToolbarButton>
+        <ToolbarButton
+          label="Upload image"
+          onClick={() => imageInputRef.current?.click()}
+        >
+          <ImageIcon size={15} />
+        </ToolbarButton>
       </div>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+
+          if (file) {
+            void uploadImageBlock({
+              file,
+              noteId,
+              onStart: () => {
+                setImageUploadError(null);
+                setIsUploadingImage(true);
+              },
+              onError: setImageUploadError,
+              onFinish: () => setIsUploadingImage(false),
+              onUploaded: ({ src, alt }) => editor?.chain().focus().setImage({ src, alt }).run()
+            });
+          }
+        }}
+      />
+      {isUploadingImage || imageUploadError ? (
+        <p className={imageUploadError ? "text-sm text-red-700" : "text-sm text-muted-foreground"}>
+          {imageUploadError ?? "Uploading image..."}
+        </p>
+      ) : null}
 
       {pasteSuggestion ? (
         <div
@@ -420,6 +459,46 @@ function getDetectionLabel(result: DetectionResult) {
   }
 
   return result.detectedType === "code" ? "code" : result.detectedType;
+}
+
+async function uploadImageBlock({
+  file,
+  noteId,
+  onStart,
+  onError,
+  onFinish,
+  onUploaded
+}: {
+  file: File;
+  noteId: string;
+  onStart: () => void;
+  onError: (message: string) => void;
+  onFinish: () => void;
+  onUploaded: (image: { src: string; alt: string }) => void;
+}) {
+  onStart();
+
+  try {
+    const formData = new FormData();
+    formData.set("noteId", noteId);
+    formData.set("file", file);
+    const response = await fetch("/api/upload/image", {
+      method: "POST",
+      body: formData
+    });
+    const payload = (await response.json()) as { src?: string; alt?: string; error?: string };
+
+    if (!response.ok || !payload.src) {
+      onError(payload.error ?? "Image upload failed.");
+      return;
+    }
+
+    onUploaded({ src: payload.src, alt: payload.alt ?? file.name });
+  } catch {
+    onError("Image upload failed.");
+  } finally {
+    onFinish();
+  }
 }
 
 function cacheEditorContent({

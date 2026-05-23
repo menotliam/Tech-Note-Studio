@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { EditorNode } from "./editor.types";
 import { parseEditorDocumentJson } from "./editor.validation";
 
 describe("editor validation", () => {
@@ -35,5 +36,37 @@ describe("editor validation", () => {
         })
       )
     ).toThrow("Invalid editor document.");
+  });
+
+  it("sanitizes unsafe link and script text while preserving code text", () => {
+    const document = parseEditorDocumentJson(
+      JSON.stringify({
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              {
+                type: "text",
+                text: "<script>alert(1)</script>Click",
+                marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }]
+              }
+            ]
+          },
+          {
+            type: "codeBlock",
+            attrs: { language: "javascript" },
+            content: [{ type: "text", text: "<script>alert(1)</script>" }]
+          }
+        ]
+      })
+    );
+
+    const paragraph = document.content?.[0] as EditorNode;
+    const codeBlock = document.content?.[1] as EditorNode;
+
+    expect(paragraph.content?.[0]?.text).toBe("alert(1)Click");
+    expect(paragraph.content?.[0]?.marks).toBeUndefined();
+    expect(codeBlock.content?.[0]?.text).toBe("<script>alert(1)</script>");
   });
 });

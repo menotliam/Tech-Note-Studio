@@ -1,4 +1,5 @@
 import type { EditorDocument, EditorNode, EditorTextNode } from "./editor.types";
+import { sanitizeEditorDocument } from "./editor.sanitizer";
 
 const allowedNodeTypes = new Set([
   "doc",
@@ -28,10 +29,7 @@ export function parseEditorDocumentJson(value: string): EditorDocument {
     throw new Error("Invalid editor document.");
   }
 
-  return {
-    ...parsed,
-    schemaVersion: parsed.schemaVersion ?? 1
-  };
+  return sanitizeEditorDocument(parsed);
 }
 
 export function isEditorDocument(value: unknown): value is EditorDocument {
@@ -44,6 +42,26 @@ export function isEditorDocument(value: unknown): value is EditorDocument {
   }
 
   if ("content" in value && !isNodeArray(value.content)) {
+    return false;
+  }
+
+  if ("marks" in value && !isMarksArray(value.marks)) {
+    return false;
+  }
+
+  return true;
+}
+
+function isMarksArray(value: unknown) {
+  return Array.isArray(value) && value.every(isMark);
+}
+
+function isMark(value: unknown) {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
+  }
+
+  if ("attrs" in value && !isRecord(value.attrs)) {
     return false;
   }
 
@@ -60,6 +78,10 @@ function isEditorNode(value: unknown): value is EditorNode | EditorTextNode {
   }
 
   if ("text" in value && typeof value.text !== "string") {
+    return false;
+  }
+
+  if ("attrs" in value && !isRecord(value.attrs)) {
     return false;
   }
 

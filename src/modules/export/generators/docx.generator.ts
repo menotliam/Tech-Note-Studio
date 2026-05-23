@@ -167,6 +167,13 @@ function blockToDocx(block: ExportBlock): Array<Paragraph | Table> {
           spacing: bodySpacing
         })
       ];
+    case "image":
+      return [
+        new Paragraph({
+          children: [new TextRun({ text: `[Image: ${block.alt || block.src}]`, italics: true })],
+          spacing: bodySpacing
+        })
+      ];
     case "table":
       return [
         renderTable(block.rows),
