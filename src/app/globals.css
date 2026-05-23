@@ -44,3 +44,134 @@ textarea,
 select {
   font: inherit;
 }
+
+.ProseMirror > * + * {
+  margin-top: 0.75rem;
+}
+
+.ProseMirror h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 650;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5rem;
+}
+
+.ProseMirror ul {
+  list-style: disc;
+}
+
+.ProseMirror ol {
+  list-style: decimal;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid hsl(var(--primary));
+  color: hsl(var(--muted-foreground));
+  padding-left: 1rem;
+}
+
+.ProseMirror pre {
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.375rem;
+  font-family: var(--font-mono), Consolas, monospace;
+  overflow-x: auto;
+  padding: 2.25rem 1rem 1rem;
+  position: relative;
+}
+
+.ProseMirror pre[data-language]::before {
+  color: hsl(var(--muted-foreground));
+  content: attr(data-language);
+  font-family: var(--font-inter), Arial, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  left: 1rem;
+  line-height: 1;
+  position: absolute;
+  text-transform: uppercase;
+  top: 0.75rem;
+}
+
+.ProseMirror .technical-code-block {
+  margin-top: 0.75rem;
+}
+
+.ProseMirror .technical-code-block pre {
+  border: 0;
+  border-radius: 0;
+  padding: 1rem;
+  position: static;
+}
+
+.ProseMirror code {
+  background: hsl(var(--muted));
+  border-radius: 0.25rem;
+  font-family: var(--font-mono), Consolas, monospace;
+  padding: 0.125rem 0.25rem;
+}
+
+.ProseMirror pre code {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.ProseMirror td,
+.ProseMirror th {
+  border: 1px solid hsl(var(--border));
+  min-width: 1em;
+  padding: 0.5rem;
+  vertical-align: top;
+}
+
+.ProseMirror th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+
+.ProseMirror hr {
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1.5rem 0;
+}
+
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: hsl(var(--muted-foreground));
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

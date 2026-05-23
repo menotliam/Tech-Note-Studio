@@ -12,6 +12,14 @@ const detectors: Detector[] = [
   detectCodeSnippet
 ];
 
+const typeTieBreakPriority = {
+  json: 5,
+  sql: 4,
+  terminal: 3,
+  code: 2,
+  plain_text: 1
+} satisfies Record<DetectionResult["detectedType"], number>;
+
 function createPlainTextDetection(): DetectionResult {
   return {
     ...PLAIN_TEXT_DETECTION,
@@ -26,12 +34,24 @@ export function detectTechnicalSnippet(input: string): DetectionResult {
     return createPlainTextDetection();
   }
 
-  for (const detector of detectors) {
-    const result = detector(normalized);
-    if (result && result.detectedType !== "plain_text") {
-      return result;
-    }
+  const candidates = detectors
+    .map((detector) => detector(normalized))
+    .filter((result): result is DetectionResult => Boolean(result))
+    .filter((result) => result.detectedType !== "plain_text");
+
+  if (candidates.length === 0) {
+    return createPlainTextDetection();
   }
 
-  return createPlainTextDetection();
+  const bestCandidate = candidates.sort((left, right) => {
+    const confidenceDelta = right.confidence - left.confidence;
+
+    if (Math.abs(confidenceDelta) > 0.03) {
+      return confidenceDelta;
+    }
+
+    return typeTieBreakPriority[right.detectedType] - typeTieBreakPriority[left.detectedType];
+  })[0];
+
+  return bestCandidate ?? createPlainTextDetection();
 }

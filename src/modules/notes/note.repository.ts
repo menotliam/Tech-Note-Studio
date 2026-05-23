@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EditorDocument } from "@/modules/editor/editor.types";
+import { getNoteFolderId, getNoteTagIds } from "@/modules/organization/organization.repository";
 import type { NoteDetail, NoteSummary } from "./note.types";
 
 type NoteRow = {
@@ -25,7 +26,7 @@ function toNoteSummary(row: NoteRow): NoteSummary {
   };
 }
 
-function toNoteDetail(row: NoteRow): NoteDetail {
+function toNoteDetailBase(row: NoteRow): Omit<NoteDetail, "folderId" | "tagIds"> {
   return {
     ...toNoteSummary(row),
     workspaceId: row.workspace_id,
@@ -37,7 +38,11 @@ function toNoteDetail(row: NoteRow): NoteDetail {
 export async function listNotes(
   supabase: SupabaseClient,
   ownerId: string,
-  search?: string
+  search?: string,
+  filters?: {
+    folderId?: string;
+    tagId?: string;
+  }
 ): Promise<NoteSummary[]> {
   let query = supabase
     .from("notes")
@@ -59,7 +64,39 @@ export async function listNotes(
     throw error;
   }
 
-  return (data as NoteRow[]).map(toNoteSummary);
+  let notes = (data as NoteRow[]).map(toNoteSummary);
+
+  if (filters?.folderId) {
+    const { data: noteFolders, error: folderError } = await supabase
+      .from("note_folders")
+      .select("note_id")
+      .eq("owner_id", ownerId)
+      .eq("folder_id", filters.folderId);
+
+    if (folderError) {
+      throw folderError;
+    }
+
+    const allowedNoteIds = new Set((noteFolders as Array<{ note_id: string }>).map((row) => row.note_id));
+    notes = notes.filter((note) => allowedNoteIds.has(note.id));
+  }
+
+  if (filters?.tagId) {
+    const { data: noteTags, error: tagError } = await supabase
+      .from("note_tags")
+      .select("note_id")
+      .eq("owner_id", ownerId)
+      .eq("tag_id", filters.tagId);
+
+    if (tagError) {
+      throw tagError;
+    }
+
+    const allowedNoteIds = new Set((noteTags as Array<{ note_id: string }>).map((row) => row.note_id));
+    notes = notes.filter((note) => allowedNoteIds.has(note.id));
+  }
+
+  return notes;
 }
 
 export async function getNoteById(
@@ -79,5 +116,18 @@ export async function getNoteById(
     throw error;
   }
 
-  return data ? toNoteDetail(data as NoteRow) : null;
+  if (!data) {
+    return null;
+  }
+
+  const [folderId, tagIds] = await Promise.all([
+    getNoteFolderId(supabase, ownerId, noteId),
+    getNoteTagIds(supabase, ownerId, noteId)
+  ]);
+
+  return {
+    ...toNoteDetailBase(data as NoteRow),
+    folderId,
+    tagIds
+  };
 }

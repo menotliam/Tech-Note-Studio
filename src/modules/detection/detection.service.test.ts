@@ -32,6 +32,25 @@ describe("detectTechnicalSnippet", () => {
     expect(result.language).toBe("typescript");
   });
 
+  it.each([
+    ["python", "def greet(name):\n    print(name)"],
+    ["javascript", "console.log(\"Hello, World!\");\nalert(\"Welcome to JavaScript!\");"],
+    ["typescript", "type User = { name: string; active: boolean };"],
+    ["java", "public class Main { public static void main(String[] args) { return; } }"],
+    ["cpp", "#include <iostream>\nint main() { std::cout << \"Hi\"; }"],
+    ["c", "#include <stdio.h>\nint main(void) { printf(\"Hi\"); }"],
+    ["php", "<?php echo \"Hello\"; ?>"],
+    ["html", "<a href=\"research.html#note\">Research Note</a>"],
+    ["html", "<a href=\"cats.html\">\n  <img src=\"cat.gif\" height=\"60\" width=\"60\" alt=\"cat\">\n</a>"],
+    ["css", ".note-card { color: red; padding: 1rem; }"]
+  ])("detects %s snippets", (language, snippet) => {
+    const result = detectTechnicalSnippet(snippet);
+
+    expect(result.detectedType).toBe("code");
+    expect(result.language).toBe(language);
+    expect(result.confidence).toBeGreaterThanOrEqual(0.5);
+  });
+
   it("falls back to plain text for normal sentences", () => {
     const result = detectTechnicalSnippet("Remember to review the database chapter tomorrow.");
 

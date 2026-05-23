@@ -13,4 +13,6 @@ export type NoteDetail = NoteSummary & {
   workspaceId: string;
   contentJson: EditorDocument;
   schemaVersion: number;
+  folderId: string | null;
+  tagIds: string[];
 };

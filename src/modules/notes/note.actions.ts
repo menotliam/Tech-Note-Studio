@@ -5,10 +5,11 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createEditorDocumentFromPlainText, emptyEditorDocument } from "@/modules/editor/editor-documents";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
+import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
 import { noteIdSchema, updateNoteSchema } from "./note.schemas";
 
-async function getAuthedFoundation() {
+export async function getAuthedFoundation() {
   const supabase = await createSupabaseServerClient();
   const {
     data: { user }
@@ -60,7 +61,9 @@ export async function updateNoteAction(formData: FormData) {
   const parsed = updateNoteSchema.safeParse({
     noteId: formData.get("noteId"),
     title: formData.get("title"),
-    body: formData.get("body")
+    body: formData.get("body") || undefined,
+    contentJson: formData.get("contentJson") || undefined,
+    contentText: formData.get("contentText") || undefined
   });
 
   if (!parsed.success) {
@@ -68,8 +71,10 @@ export async function updateNoteAction(formData: FormData) {
   }
 
   const { supabase, user } = await getAuthedFoundation();
-  const contentJson = createEditorDocumentFromPlainText(parsed.data.body);
-  const contentText = extractPlainTextFromEditorJson(contentJson);
+  const contentJson = parsed.data.contentJson
+    ? parseEditorDocumentJson(parsed.data.contentJson)
+    : createEditorDocumentFromPlainText(parsed.data.body ?? "");
+  const contentText = parsed.data.contentText ?? extractPlainTextFromEditorJson(contentJson);
 
   const { error } = await supabase
     .from("notes")

@@ -11,7 +11,9 @@ export const noteBodySchema = z.string().max(200000, "Note content is too large 
 export const updateNoteSchema = z.object({
   noteId: z.string().uuid(),
   title: noteTitleSchema,
-  body: noteBodySchema
+  body: noteBodySchema.optional(),
+  contentJson: z.string().optional(),
+  contentText: noteBodySchema.optional()
 });
 
 export const noteIdSchema = z.string().uuid();
