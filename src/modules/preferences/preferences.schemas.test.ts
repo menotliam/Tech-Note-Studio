@@ -94,6 +94,16 @@ describe("preferences schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts dashboard focus mode preference", () => {
+    const result = userPreferencesPatchSchema.safeParse({
+      dashboard: {
+        focusModeEnabled: true
+      }
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("rejects empty preference patches", () => {
     expect(userPreferencesPatchSchema.safeParse({}).success).toBe(false);
   });

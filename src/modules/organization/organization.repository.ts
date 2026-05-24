@@ -4,6 +4,7 @@ import type { FolderSummary, TagSummary } from "./organization.types";
 type FolderRow = {
   id: string;
   name: string;
+  parent_id: string | null;
 };
 
 type TagRow = {
@@ -19,7 +20,7 @@ export async function listFolders(
 ): Promise<FolderSummary[]> {
   const { data, error } = await supabase
     .from("folders")
-    .select("id, name")
+    .select("id, name, parent_id")
     .eq("owner_id", ownerId)
     .eq("workspace_id", workspaceId)
     .order("name", { ascending: true });
@@ -30,7 +31,8 @@ export async function listFolders(
 
   return (data as FolderRow[]).map((folder) => ({
     id: folder.id,
-    name: folder.name
+    name: folder.name,
+    parentId: folder.parent_id
   }));
 }
 

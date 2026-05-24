@@ -28,10 +28,12 @@
     "@tiptap/starter-kit": "latest",
     "clsx": "latest",
     "docx": "latest",
+    "framer-motion": "latest",
     "lucide-react": "latest",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "shiki": "latest",
     "tailwind-merge": "latest",
     "zod": "latest"
   },

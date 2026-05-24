@@ -8,7 +8,7 @@ import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-ext
 import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
 import { logSecurityEvent } from "@/modules/security/security.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
-import { noteIdSchema, updateNoteSchema } from "./note.schemas";
+import { noteIdSchema, renameNoteSchema, updateNoteSchema } from "./note.schemas";
 
 export async function getAuthedFoundation() {
   const supabase = await createSupabaseServerClient();
@@ -120,6 +120,27 @@ export async function togglePinNoteAction(formData: FormData) {
 
   revalidatePath("/");
   revalidatePath(`/notes/${noteId}`);
+}
+
+export async function renameNoteAction(formData: FormData) {
+  const parsed = renameNoteSchema.parse({
+    noteId: formData.get("noteId"),
+    title: formData.get("title")
+  });
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ title: parsed.title })
+    .eq("id", parsed.noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath(`/notes/${parsed.noteId}`);
 }
 
 export async function archiveNoteAction(formData: FormData) {

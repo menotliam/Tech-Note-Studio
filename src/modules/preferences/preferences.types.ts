@@ -35,6 +35,7 @@ export type AppearancePreferences = {
 export type DashboardPreferences = {
   density: DashboardDensity;
   sidebarCollapsed: boolean;
+  focusModeEnabled: boolean;
   defaultView: DashboardDefaultView;
   noteListStyle: NoteListStyle;
   sortDefault: DashboardSort;

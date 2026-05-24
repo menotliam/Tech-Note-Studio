@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EditorContent, type JSONContent, useEditor } from "@tiptap/react";
 import type { EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
@@ -39,6 +39,7 @@ import {
   enqueueSyncOperation,
   putCachedNote
 } from "@/modules/offline-sync/indexeddb.client";
+import type { EditorPreferences } from "@/modules/preferences/preferences.types";
 
 type RichNoteEditorProps = {
   noteId: string;
@@ -46,14 +47,24 @@ type RichNoteEditorProps = {
   title: string;
   updatedAt: string;
   initialContent: EditorDocument;
+  preferences: EditorPreferences;
+  titleControl?: ReactNode;
 };
 
-export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialContent }: RichNoteEditorProps) {
+export function RichNoteEditor({
+  noteId,
+  workspaceId,
+  title,
+  updatedAt,
+  initialContent,
+  preferences,
+  titleControl
+}: RichNoteEditorProps) {
   const tiptapContent = useMemo(() => toTiptapContent(initialContent), [initialContent]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [contentJson, setContentJson] = useState(() => serializeContent(tiptapContent));
   const [contentText, setContentText] = useState(() => extractPlainTextFromEditorJson(initialContent));
-  const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(true);
+  const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(preferences.autoDetectionEnabled);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
@@ -78,6 +89,23 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
         window.clearTimeout(cacheTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    function handleOutlineJump(event: Event) {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+
+      if (!text || !containerRef.current) {
+        return;
+      }
+
+      const headings = Array.from(containerRef.current.querySelectorAll("h1, h2, h3"));
+      const heading = headings.find((candidate) => candidate.textContent?.trim() === text);
+      heading?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    window.addEventListener("technote:outline-jump", handleOutlineJump);
+    return () => window.removeEventListener("technote:outline-jump", handleOutlineJump);
   }, []);
 
   const editor = useEditor({
@@ -116,7 +144,8 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
     editorProps: {
       attributes: {
         class:
-          "min-h-96 rounded-md border border-border bg-surface px-5 py-4 leading-7 outline-none focus:border-primary"
+          "min-h-[58vh] px-5 py-4 outline-none " +
+          getEditorTypographyClass(preferences)
       },
       handlePaste(view, event) {
         const pastedText = event.clipboardData?.getData("text/plain") ?? "";
@@ -171,12 +200,14 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
         contentText: text,
         enqueueForSync: false
       });
+      dispatchNoteDirtyEvent(noteId, false);
     },
     onUpdate({ editor: updatedEditor }) {
       const document = toEditorDocument(updatedEditor.getJSON());
       const text = updatedEditor.getText({ blockSeparator: "\n" });
       setContentJson(JSON.stringify(document));
       setContentText(text);
+      dispatchNoteDirtyEvent(noteId, true);
 
       if (cacheTimerRef.current) {
         window.clearTimeout(cacheTimerRef.current);
@@ -197,11 +228,11 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
   });
 
   return (
-    <div ref={containerRef} className="relative space-y-3">
+    <div ref={containerRef} className="relative space-y-3" data-code-theme={preferences.codeTheme}>
       <input type="hidden" name="contentJson" value={contentJson} />
       <input type="hidden" name="contentText" value={contentText} />
 
-      <div className="flex flex-wrap gap-1 rounded-md border border-border bg-surface p-2">
+      <div className="sticky top-0 z-10 flex flex-wrap gap-1 border-b border-border bg-background/95 p-2 backdrop-blur">
         <label className="mr-2 inline-flex h-8 items-center gap-2 rounded-md border border-border px-2 text-sm text-muted-foreground">
           <input
             type="checkbox"
@@ -265,6 +296,7 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
           <ImageIcon size={15} />
         </ToolbarButton>
       </div>
+      {titleControl ? <div className="px-5 pt-5">{titleControl}</div> : null}
       <input
         ref={imageInputRef}
         type="file"
@@ -360,6 +392,14 @@ export function RichNoteEditor({ noteId, workspaceId, title, updatedAt, initialC
   );
 }
 
+function dispatchNoteDirtyEvent(noteId: string, dirty: boolean) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent("technote:note-dirty", { detail: { noteId, dirty } }));
+}
+
 function ToolbarButton({
   label,
   active = false,
@@ -389,6 +429,23 @@ function ToolbarButton({
 
 function ToolbarDivider() {
   return <span className="mx-1 h-8 w-px bg-border" aria-hidden />;
+}
+
+function getEditorTypographyClass(preferences: EditorPreferences) {
+  const fontFamilyClass =
+    preferences.fontFamily === "mono"
+      ? "font-mono"
+      : preferences.fontFamily === "serif"
+        ? "font-serif"
+        : "font-sans";
+  const lineHeightClass =
+    preferences.lineHeight === "compact"
+      ? "leading-6"
+      : preferences.lineHeight === "spacious"
+        ? "leading-8"
+        : "leading-7";
+
+  return `${fontFamilyClass} ${lineHeightClass}`;
 }
 
 function toTiptapContent(document: EditorDocument): JSONContent {

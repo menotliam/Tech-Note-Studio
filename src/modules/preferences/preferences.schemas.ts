@@ -32,6 +32,7 @@ export const appearancePreferencesSchema = z.object({
 export const dashboardPreferencesSchema = z.object({
   density: z.enum(dashboardDensityValues).default(defaultUserPreferences.dashboard.density),
   sidebarCollapsed: z.boolean().default(defaultUserPreferences.dashboard.sidebarCollapsed),
+  focusModeEnabled: z.boolean().default(defaultUserPreferences.dashboard.focusModeEnabled),
   defaultView: z.enum(dashboardDefaultViewValues).default(defaultUserPreferences.dashboard.defaultView),
   noteListStyle: z.enum(noteListStyleValues).default(defaultUserPreferences.dashboard.noteListStyle),
   sortDefault: z.enum(dashboardSortValues).default(defaultUserPreferences.dashboard.sortDefault)
@@ -73,6 +74,7 @@ const dashboardPreferencesPatchSchema = z
   .object({
     density: z.enum(dashboardDensityValues).optional(),
     sidebarCollapsed: z.boolean().optional(),
+    focusModeEnabled: z.boolean().optional(),
     defaultView: z.enum(dashboardDefaultViewValues).optional(),
     noteListStyle: z.enum(noteListStyleValues).optional(),
     sortDefault: z.enum(dashboardSortValues).optional()

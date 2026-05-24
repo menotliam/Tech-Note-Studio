@@ -3,38 +3,92 @@
 @tailwind utilities;
 
 :root {
-  --background: 42 27% 97%;
+  color-scheme: light;
+  --background: 218 30% 97%;
   --foreground: 220 18% 12%;
-  --border: 220 13% 88%;
-  --muted: 210 20% 94%;
+  --border: 220 16% 86%;
+  --muted: 216 25% 93%;
   --muted-foreground: 220 9% 42%;
   --surface: 0 0% 100%;
-  --primary: 188 78% 27%;
-  --primary-foreground: 0 0% 100%;
-  --accent: 40 89% 58%;
-  --accent-foreground: 220 18% 12%;
+  --primary: 188 92% 44%;
+  --primary-foreground: 222 47% 8%;
+  --accent: 266 92% 68%;
+  --accent-foreground: 0 0% 100%;
+  --accent-gradient: linear-gradient(135deg, #22d3ee, #8b5cf6);
+  --panel: 220 33% 98%;
+  --panel-strong: 0 0% 100%;
+  --ring: 188 92% 44%;
+  --code-block-background: 0 0% 100%;
+  --code-block-header: 216 25% 96%;
+  --code-block-foreground: 220 18% 18%;
+  --code-block-border: 220 16% 84%;
+  --code-block-muted: 220 9% 42%;
 }
 
 .dark {
-  --background: 220 18% 10%;
-  --foreground: 42 27% 96%;
-  --border: 218 14% 24%;
-  --muted: 218 15% 18%;
-  --muted-foreground: 220 10% 70%;
-  --surface: 220 16% 14%;
-  --primary: 185 68% 45%;
-  --primary-foreground: 220 18% 10%;
-  --accent: 40 89% 58%;
-  --accent-foreground: 220 18% 12%;
+  color-scheme: dark;
+  --background: 224 28% 7%;
+  --foreground: 216 34% 94%;
+  --border: 223 21% 18%;
+  --muted: 222 25% 13%;
+  --muted-foreground: 218 13% 67%;
+  --surface: 223 27% 10%;
+  --panel: 224 28% 8%;
+  --panel-strong: 222 29% 12%;
+  --code-block-background: 222 29% 12%;
+  --code-block-header: 224 28% 9%;
+  --code-block-foreground: 190 80% 82%;
+  --code-block-border: 223 21% 18%;
+  --code-block-muted: 218 13% 67%;
+}
+
+[data-code-theme="github-light"] {
+  --code-block-background: 210 29% 97%;
+  --code-block-header: 210 29% 95%;
+  --code-block-foreground: 213 13% 16%;
+  --code-block-border: 214 13% 85%;
+  --code-block-muted: 215 9% 45%;
+}
+
+[data-code-theme="github-dark"] {
+  --code-block-background: 216 28% 7%;
+  --code-block-header: 216 28% 10%;
+  --code-block-foreground: 212 17% 80%;
+  --code-block-border: 215 20% 20%;
+  --code-block-muted: 215 12% 62%;
+}
+
+[data-code-theme="dracula"] {
+  --code-block-background: 231 15% 18%;
+  --code-block-header: 231 15% 15%;
+  --code-block-foreground: 60 30% 96%;
+  --code-block-border: 232 14% 28%;
+  --code-block-muted: 225 27% 70%;
+}
+
+[data-code-theme="one-dark"] {
+  --code-block-background: 220 13% 18%;
+  --code-block-header: 220 13% 15%;
+  --code-block-foreground: 220 14% 71%;
+  --code-block-border: 220 13% 27%;
+  --code-block-muted: 220 10% 60%;
 }
 
 * {
   box-sizing: border-box;
 }
 
+*::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
 body {
   margin: 0;
-  background: hsl(var(--background));
+  background:
+    linear-gradient(180deg, hsl(var(--background)), hsl(var(--panel))),
+    hsl(var(--background));
   color: hsl(var(--foreground));
 }
 
@@ -50,15 +104,21 @@ select {
 }
 
 .ProseMirror h1 {
+  border-left: 3px solid hsl(var(--primary));
   font-size: 2rem;
   font-weight: 700;
   line-height: 1.2;
+  padding-left: 0.75rem;
 }
 
 .ProseMirror h2 {
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1.25;
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--primary) / 0.5);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.3rem;
 }
 
 .ProseMirror h3 {
@@ -86,9 +146,11 @@ select {
 }
 
 .ProseMirror pre {
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
+  background: hsl(var(--code-block-background));
+  border: 1px solid hsl(var(--code-block-border));
   border-radius: 0.375rem;
+  box-shadow: inset 3px 0 0 hsl(var(--primary));
+  color: hsl(var(--code-block-foreground));
   font-family: var(--font-mono), Consolas, monospace;
   overflow-x: auto;
   padding: 2.25rem 1rem 1rem;
@@ -96,7 +158,7 @@ select {
 }
 
 .ProseMirror pre[data-language]::before {
-  color: hsl(var(--muted-foreground));
+  color: hsl(var(--primary));
   content: attr(data-language);
   font-family: var(--font-inter), Arial, sans-serif;
   font-size: 0.75rem;
@@ -115,8 +177,68 @@ select {
 .ProseMirror .technical-code-block pre {
   border: 0;
   border-radius: 0;
+  box-shadow: none;
   padding: 1rem;
   position: static;
+}
+
+.technical-code-block-content[data-highlighted="true"],
+.technical-code-block-content[data-highlighted="true"] * {
+  color: transparent !important;
+}
+
+.technical-code-block-content[data-highlighted="true"] {
+  caret-color: hsl(var(--code-block-foreground));
+}
+
+[data-active-activity="explorer"] [data-activity-panel="explorer"],
+[data-active-activity="search"] [data-activity-panel="search"],
+[data-active-activity="templates"] [data-activity-panel="templates"],
+[data-active-activity="tags"] [data-activity-panel="tags"],
+[data-active-activity="export"] [data-activity-panel="export"],
+[data-active-activity="settings"] [data-activity-panel="settings"] {
+  display: block;
+}
+
+[data-focus-mode="true"] {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+[data-focus-mode="true"] [data-explorer-panel],
+[data-focus-mode="true"] [data-outline-card] {
+  display: none;
+}
+
+[data-focus-mode="true"] [data-editor-workbench] {
+  grid-column: 2 / -1;
+}
+
+[data-ide-shell="true"][data-explorer-collapsed="true"] {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+[data-ide-shell="true"][data-explorer-collapsed="true"] [data-explorer-panel] {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  [data-ide-shell="true"] {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  [data-ide-shell="true"] > :first-child {
+    flex-direction: row;
+    height: 56px;
+    width: 100%;
+    border-bottom: 1px solid hsl(var(--border));
+    border-right: 0;
+    overflow-x: auto;
+  }
+
+  [data-explorer-panel],
+  [data-outline-card] {
+    display: none;
+  }
 }
 
 .ProseMirror code {

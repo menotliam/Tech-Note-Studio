@@ -171,6 +171,7 @@ select
   jsonb_build_object(
     'density', 'comfortable',
     'sidebarCollapsed', false,
+    'focusModeEnabled', false,
     'defaultView', 'folder',
     'noteListStyle', 'row',
     'sortDefault', 'updated_desc'

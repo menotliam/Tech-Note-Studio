@@ -12,6 +12,8 @@ const config: Config = {
         muted: "hsl(var(--muted))",
         "muted-foreground": "hsl(var(--muted-foreground))",
         surface: "hsl(var(--surface))",
+        panel: "hsl(var(--panel))",
+        "panel-strong": "hsl(var(--panel-strong))",
         primary: "hsl(var(--primary))",
         "primary-foreground": "hsl(var(--primary-foreground))",
         accent: "hsl(var(--accent))",

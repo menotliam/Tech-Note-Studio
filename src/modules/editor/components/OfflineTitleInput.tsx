@@ -38,6 +38,7 @@ export function OfflineTitleInput({
       aria-label="Note title"
       onChange={(event) => {
         const title = event.target.value;
+        window.dispatchEvent(new CustomEvent("technote:note-dirty", { detail: { noteId, dirty: true } }));
 
         if (cacheTimerRef.current) {
           window.clearTimeout(cacheTimerRef.current);

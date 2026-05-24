@@ -5,6 +5,8 @@ import { listNotes } from "@/modules/notes/note.repository";
 import { noteSearchSchema } from "@/modules/notes/note.schemas";
 import { listFolders, listTags } from "@/modules/organization/organization.repository";
 import { organizationIdSchema } from "@/modules/organization/organization.schemas";
+import { loadUserPreferences } from "@/modules/preferences/preferences.service";
+import { getWorkspaceSummary } from "@/modules/workspace/workspace.repository";
 import { listSystemTemplates } from "@/modules/templates/template.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
 
@@ -30,11 +32,13 @@ export default async function HomePage({
   const searchQuery = noteSearchSchema.parse(params?.q);
   const folderId = params?.folder ? organizationIdSchema.parse(params.folder) : undefined;
   const tagId = params?.tag ? organizationIdSchema.parse(params.tag) : undefined;
-  const [notes, templates, folders, tags] = await Promise.all([
-    listNotes(supabase, user.id, searchQuery, { folderId, tagId }),
+  const [notes, templates, folders, tags, preferences, workspace] = await Promise.all([
+    listNotes(supabase, user.id),
     listSystemTemplates(supabase),
     listFolders(supabase, user.id, workspaceId),
-    listTags(supabase, user.id, workspaceId)
+    listTags(supabase, user.id, workspaceId),
+    loadUserPreferences(supabase, user.id),
+    getWorkspaceSummary(supabase, user.id, workspaceId)
   ]);
 
   return (
@@ -44,6 +48,8 @@ export default async function HomePage({
       templates={templates}
       folders={folders}
       tags={tags}
+      preferences={preferences}
+      workspace={workspace}
       searchQuery={searchQuery ?? ""}
       activeFolderId={folderId}
       activeTagId={tagId}

@@ -22,7 +22,9 @@ function toNoteSummary(row: NoteRow): NoteSummary {
     contentText: row.content_text ?? "",
     isPinned: row.is_pinned,
     isArchived: row.is_archived,
-    updatedAt: row.updated_at
+    updatedAt: row.updated_at,
+    folderId: null,
+    tagIds: []
   };
 }
 
@@ -64,7 +66,7 @@ export async function listNotes(
     throw error;
   }
 
-  let notes = (data as NoteRow[]).map(toNoteSummary);
+  let notes = await attachNoteOrganization(supabase, ownerId, (data as NoteRow[]).map(toNoteSummary));
 
   if (filters?.folderId) {
     const { data: noteFolders, error: folderError } = await supabase
@@ -97,6 +99,55 @@ export async function listNotes(
   }
 
   return notes;
+}
+
+async function attachNoteOrganization(
+  supabase: SupabaseClient,
+  ownerId: string,
+  notes: NoteSummary[]
+): Promise<NoteSummary[]> {
+  if (notes.length === 0) {
+    return notes;
+  }
+
+  const noteIds = notes.map((note) => note.id);
+  const [folderResult, tagResult] = await Promise.all([
+    supabase
+      .from("note_folders")
+      .select("note_id, folder_id")
+      .eq("owner_id", ownerId)
+      .in("note_id", noteIds),
+    supabase
+      .from("note_tags")
+      .select("note_id, tag_id")
+      .eq("owner_id", ownerId)
+      .in("note_id", noteIds)
+  ]);
+
+  if (folderResult.error) {
+    throw folderResult.error;
+  }
+
+  if (tagResult.error) {
+    throw tagResult.error;
+  }
+
+  const folderByNoteId = new Map(
+    (folderResult.data as Array<{ note_id: string; folder_id: string }>).map((row) => [row.note_id, row.folder_id])
+  );
+  const tagsByNoteId = new Map<string, string[]>();
+
+  for (const row of tagResult.data as Array<{ note_id: string; tag_id: string }>) {
+    const tagIds = tagsByNoteId.get(row.note_id) ?? [];
+    tagIds.push(row.tag_id);
+    tagsByNoteId.set(row.note_id, tagIds);
+  }
+
+  return notes.map((note) => ({
+    ...note,
+    folderId: folderByNoteId.get(note.id) ?? null,
+    tagIds: tagsByNoteId.get(note.id) ?? []
+  }));
 }
 
 export async function getNoteById(

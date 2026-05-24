@@ -6,7 +6,8 @@ export const colorSchema = z.string().trim().max(30).optional();
 export const organizationIdSchema = z.string().uuid();
 
 export const createFolderSchema = z.object({
-  name: folderNameSchema
+  name: folderNameSchema,
+  parentId: organizationIdSchema.optional()
 });
 
 export const createTagSchema = z.object({
@@ -22,4 +23,16 @@ export const assignFolderSchema = z.object({
 export const assignTagSchema = z.object({
   noteId: organizationIdSchema,
   tagId: organizationIdSchema
+});
+
+export const folderIdSchema = organizationIdSchema;
+
+export const renameFolderSchema = z.object({
+  folderId: organizationIdSchema,
+  name: folderNameSchema
+});
+
+export const assignParentFolderSchema = z.object({
+  folderId: organizationIdSchema,
+  parentId: organizationIdSchema.optional()
 });

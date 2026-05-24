@@ -7,6 +7,8 @@ export type NoteSummary = {
   isPinned: boolean;
   isArchived: boolean;
   updatedAt: string;
+  folderId: string | null;
+  tagIds: string[];
 };
 
 export type NoteDetail = NoteSummary & {

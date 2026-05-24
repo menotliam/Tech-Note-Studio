@@ -22,6 +22,7 @@ export const defaultUserPreferences: UserPreferences = {
   dashboard: {
     density: "comfortable",
     sidebarCollapsed: false,
+    focusModeEnabled: false,
     defaultView: "folder",
     noteListStyle: "row",
     sortDefault: "updated_desc"

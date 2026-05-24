@@ -18,4 +18,9 @@ export const updateNoteSchema = z.object({
 
 export const noteIdSchema = z.string().uuid();
 
+export const renameNoteSchema = z.object({
+  noteId: noteIdSchema,
+  title: noteTitleSchema
+});
+
 export const noteSearchSchema = z.string().trim().max(120).optional();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { noteIdSchema, updateNoteSchema } from "./note.schemas";
+import { noteIdSchema, renameNoteSchema, updateNoteSchema } from "./note.schemas";
 
 describe("note schemas", () => {
   it("accepts a valid note update", () => {
@@ -24,5 +24,21 @@ describe("note schemas", () => {
 
   it("rejects invalid note ids", () => {
     expect(noteIdSchema.safeParse("not-a-uuid").success).toBe(false);
+  });
+
+  it("validates note rename input", () => {
+    expect(
+      renameNoteSchema.safeParse({
+        noteId: "550e8400-e29b-41d4-a716-446655440000",
+        title: "Renamed note"
+      }).success
+    ).toBe(true);
+
+    expect(
+      renameNoteSchema.safeParse({
+        noteId: "550e8400-e29b-41d4-a716-446655440000",
+        title: ""
+      }).success
+    ).toBe(false);
   });
 });
