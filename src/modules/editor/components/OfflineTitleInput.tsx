@@ -31,6 +31,22 @@ export function OfflineTitleInput({
   }, []);
 
   useEffect(() => {
+    function handleNoteSaveStart(event: Event) {
+      const detail = (event as CustomEvent<{ noteId?: string }>).detail;
+
+      if (detail?.noteId !== noteId || !cacheTimerRef.current) {
+        return;
+      }
+
+      window.clearTimeout(cacheTimerRef.current);
+      cacheTimerRef.current = null;
+    }
+
+    window.addEventListener("technote:note-save-start", handleNoteSaveStart);
+    return () => window.removeEventListener("technote:note-save-start", handleNoteSaveStart);
+  }, [noteId]);
+
+  useEffect(() => {
     let cancelled = false;
 
     void getCachedNote(noteId)

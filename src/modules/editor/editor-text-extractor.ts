@@ -23,7 +23,7 @@ export function extractPlainTextFromEditorJson(document: EditorDocument): string
 
 function extractNodeText(node: EditorNode | EditorTextNode): string {
   if ("text" in node && typeof node.text === "string") {
-    return node.text;
+    return node.text.replaceAll("\u200B", "");
   }
 
   if (!("content" in node) || !node.content?.length) {

@@ -65,7 +65,7 @@ function getNodeChildren(node: EditorNode | EditorTextNode) {
 }
 
 function sanitizeText(value: string) {
-  return value.replace(/<\s*\/?\s*script\b[^>]*>/gi, "");
+  return value.replace(/<\s*\/?\s*script\b[^>]*>/gi, "").replaceAll("\u200B", "");
 }
 
 function sanitizeMarks(marks: EditorMark[] | undefined) {
@@ -82,8 +82,10 @@ function sanitizeMarks(marks: EditorMark[] | undefined) {
 
 function sanitizeAttrs(nodeType: string, attrs: Record<string, unknown> | undefined) {
   switch (nodeType) {
+    case "paragraph":
+      return sanitizeTextAlignAttrs(attrs);
     case "heading":
-      return { level: sanitizeHeadingLevel(attrs?.level) };
+      return { level: sanitizeHeadingLevel(attrs?.level), ...sanitizeTextAlignAttrs(attrs) };
     case "taskItem":
       return { checked: Boolean(attrs?.checked) };
     case "image":
@@ -103,8 +105,41 @@ function sanitizeImageAttrs(attrs: Record<string, unknown> | undefined) {
   const src = typeof attrs?.src === "string" && isSafeWebUrl(attrs.src) ? attrs.src : "";
   const alt = typeof attrs?.alt === "string" ? attrs.alt.slice(0, 300) : "";
   const title = typeof attrs?.title === "string" ? attrs.title.slice(0, 300) : "";
+  const caption = typeof attrs?.caption === "string" ? attrs.caption.slice(0, 500) : "";
+  const width = sanitizeImageWidth(attrs?.width);
+  const textAlign = sanitizeTextAlign(attrs?.textAlign);
+  const fileId = typeof attrs?.fileId === "string" && isUuidLike(attrs.fileId) ? attrs.fileId : undefined;
 
-  return src ? { src, alt, title } : undefined;
+  return src ? { src, alt, title, caption, width, textAlign, fileId } : undefined;
+}
+
+function sanitizeImageWidth(width: unknown) {
+  if (typeof width === "number" && Number.isFinite(width)) {
+    return Math.round(Math.min(Math.max(width, 160), 1200));
+  }
+
+  if (width === "small") {
+    return 288;
+  }
+
+  if (width === "full") {
+    return 960;
+  }
+
+  return 420;
+}
+
+function sanitizeTextAlignAttrs(attrs: Record<string, unknown> | undefined) {
+  const textAlign = sanitizeTextAlign(attrs?.textAlign);
+  return textAlign ? { textAlign } : undefined;
+}
+
+function sanitizeTextAlign(textAlign: unknown) {
+  return textAlign === "left" || textAlign === "center" || textAlign === "right" ? textAlign : undefined;
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function sanitizeLinkAttrs(attrs: Record<string, unknown> | undefined) {

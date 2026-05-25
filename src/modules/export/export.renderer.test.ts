@@ -44,4 +44,35 @@ describe("editorDocumentToExportDocument", () => {
       documents: [first, second]
     });
   });
+
+  it("keeps inline images from editor paragraphs", () => {
+    const document: EditorDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "Before" },
+            {
+              type: "image",
+              attrs: {
+                src: "https://example.com/image.png",
+                alt: "Diagram"
+              }
+            },
+            { type: "text", text: "After" }
+          ]
+        }
+      ]
+    };
+
+    const result = editorDocumentToExportDocument("Inline images", document);
+
+    expect(result.blocks).toEqual([
+      { type: "paragraph", text: "Before" },
+      { type: "image", src: "https://example.com/image.png", alt: "Diagram" },
+      { type: "paragraph", text: "After" }
+    ]);
+  });
 });

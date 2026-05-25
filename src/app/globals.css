@@ -103,6 +103,24 @@ select {
   margin-top: 0.75rem;
 }
 
+.ProseMirror [data-image-block] {
+  line-height: 0;
+  vertical-align: bottom;
+}
+
+.ProseMirror [data-image-block] input {
+  line-height: 1.25rem;
+}
+
+.ProseMirror p:has([data-image-block]) {
+  line-height: 1.25rem;
+}
+
+.ProseMirror p:has([data-image-block]) [data-image-block] {
+  margin-left: 0.375rem;
+  margin-right: 0.375rem;
+}
+
 .ProseMirror h1 {
   border-left: 3px solid hsl(var(--primary));
   font-size: 2rem;
@@ -131,12 +149,34 @@ select {
   padding-left: 1.5rem;
 }
 
-.ProseMirror ul {
+.ProseMirror ul:not([data-type="taskList"]) {
   list-style: disc;
 }
 
 .ProseMirror ol {
-  list-style: decimal;
+  counter-reset: technote-ordered-list;
+  list-style: none;
+  padding-left: 2rem;
+}
+
+.ProseMirror ol > li {
+  counter-increment: technote-ordered-list;
+}
+
+.ProseMirror ol > li::marker {
+  content: counters(technote-ordered-list, ".") ". ";
+}
+
+.ProseMirror ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) {
+  list-style-type: circle;
+}
+
+.ProseMirror ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) {
+  list-style-type: square;
+}
+
+.ProseMirror ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) ul:not([data-type="taskList"]) {
+  list-style-type: "\25A1  ";
 }
 
 .ProseMirror blockquote {

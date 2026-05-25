@@ -30,8 +30,7 @@ function nodeToExportBlocks(node: EditorNode | EditorTextNode): ExportBlock[] {
         }
       ];
     case "paragraph": {
-      const text = getNodeText(node);
-      return text ? [{ type: "paragraph", text }] : [];
+      return paragraphToExportBlocks(node);
     }
     case "blockquote":
       return [{ type: "quote", text: getNodeText(node) }];
@@ -83,9 +82,40 @@ function nodeToExportBlocks(node: EditorNode | EditorTextNode): ExportBlock[] {
   }
 }
 
+function paragraphToExportBlocks(node: EditorNode): ExportBlock[] {
+  const children = getNodeChildren(node);
+
+  if (children.length === 0) {
+    return [];
+  }
+
+  const blocks: ExportBlock[] = [];
+  let textBuffer = "";
+
+  children.forEach((child) => {
+    if (child.type !== "image") {
+      textBuffer += getNodeText(child);
+      return;
+    }
+
+    if (textBuffer.trim()) {
+      blocks.push({ type: "paragraph", text: textBuffer.trim() });
+      textBuffer = "";
+    }
+
+    blocks.push(...nodeToExportBlocks(child));
+  });
+
+  if (textBuffer.trim()) {
+    blocks.push({ type: "paragraph", text: textBuffer.trim() });
+  }
+
+  return blocks;
+}
+
 function getNodeText(node: EditorNode | EditorTextNode): string {
   if ("text" in node && typeof node.text === "string") {
-    return node.text;
+    return node.text.replaceAll("\u200B", "");
   }
 
   return getNodeChildren(node).map((child) => getNodeText(child)).join("").trim();

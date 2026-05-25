@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { Extension, type CommandProps } from "@tiptap/core";
 import { EditorContent, type Editor, type JSONContent, useEditor } from "@tiptap/react";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Selection } from "@tiptap/pm/state";
+import { Fragment, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { NodeSelection, Selection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import TiptapImage from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table } from "@tiptap/extension-table";
@@ -20,6 +21,9 @@ import {
   Braces,
   CheckSquare,
   Code2,
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Heading1,
   Heading2,
   Heading3,
@@ -33,6 +37,8 @@ import {
 } from "lucide-react";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { getPasteDetectionAction } from "@/modules/editor/editor-paste-detection";
+import { ImageBlock } from "@/modules/editor/extensions/ImageBlock";
+import { ListKeyboardShortcuts } from "@/modules/editor/extensions/ListKeyboardShortcuts";
 import { TechnicalCodeBlock } from "@/modules/editor/extensions/TechnicalCodeBlock";
 import type { EditorDocument } from "@/modules/editor/editor.types";
 import type { DetectionResult } from "@/modules/detection/detection.types";
@@ -56,6 +62,117 @@ type RichNoteEditorProps = {
   titleControl?: ReactNode;
 };
 
+type TextAlignment = "left" | "center" | "right";
+type EditorContentNode = NonNullable<EditorDocument["content"]>[number];
+type EditorContentChildren = EditorContentNode[];
+
+const imageCaretAnchor = "\u200B";
+const internalImageDragType = "application/x-technote-image-position";
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    textAlignment: {
+      setTextAlignment: (alignment: TextAlignment) => ReturnType;
+    };
+  }
+}
+
+const textAlignmentNodeTypes = new Set(["paragraph", "heading"]);
+
+const TextAlignmentExtension = Extension.create({
+  name: "textAlignment",
+
+  addGlobalAttributes() {
+    return [
+      {
+        types: Array.from(textAlignmentNodeTypes),
+        attributes: {
+          textAlign: {
+            default: null,
+            parseHTML: (element) => sanitizeTextAlignment(element.style.textAlign),
+            renderHTML: (attributes) => {
+              const textAlign = sanitizeTextAlignment(attributes.textAlign);
+
+              return textAlign ? { style: `text-align: ${textAlign}` } : {};
+            }
+          }
+        }
+      }
+    ];
+  },
+
+  addCommands() {
+    return {
+      setTextAlignment:
+        (alignment: TextAlignment) =>
+        ({ state, dispatch }: CommandProps) => {
+          const nextAlignment = sanitizeTextAlignment(alignment);
+
+          if (!nextAlignment) {
+            return false;
+          }
+
+          const transaction = state.tr;
+          const { from, to, empty, $from } = state.selection;
+          let changed = false;
+
+          if (state.selection instanceof NodeSelection && state.selection.node.type.name === "image") {
+            const parentTarget = getSelectionParentTextAlignmentTarget(state);
+
+            if (parentTarget) {
+              transaction.setNodeMarkup(parentTarget.position, undefined, {
+                ...parentTarget.node.attrs,
+                textAlign: nextAlignment
+              });
+              changed = true;
+            }
+          } else if (state.selection instanceof NodeSelection && textAlignmentNodeTypes.has(state.selection.node.type.name)) {
+            transaction.setNodeMarkup(from, undefined, { ...state.selection.node.attrs, textAlign: nextAlignment });
+            changed = true;
+          } else if (empty) {
+            const nearbyImage = getNearbyImageTextAlignmentTarget(state);
+
+            if (nearbyImage) {
+              transaction.setNodeMarkup(nearbyImage.position, undefined, {
+                ...nearbyImage.node.attrs,
+                textAlign: nextAlignment
+              });
+              changed = true;
+            }
+
+            for (let depth = $from.depth; depth >= 0; depth -= 1) {
+              const node = $from.node(depth);
+
+              if (!changed && textAlignmentNodeTypes.has(node.type.name)) {
+                const position = depth === 0 ? 0 : $from.before(depth);
+                transaction.setNodeMarkup(position, undefined, { ...node.attrs, textAlign: nextAlignment });
+                changed = true;
+                break;
+              }
+            }
+          } else {
+            state.doc.nodesBetween(from, to, (node, position) => {
+              if (!textAlignmentNodeTypes.has(node.type.name)) {
+                return true;
+              }
+
+              transaction.setNodeMarkup(position, undefined, { ...node.attrs, textAlign: nextAlignment });
+              changed = true;
+              return false;
+            });
+          }
+
+          if (!changed) {
+            return false;
+          }
+
+          dispatch?.(transaction.scrollIntoView());
+          return true;
+        }
+    };
+  }
+});
+
 export function RichNoteEditor({
   noteId,
   workspaceId,
@@ -65,15 +182,19 @@ export function RichNoteEditor({
   preferences,
   titleControl
 }: RichNoteEditorProps) {
+  const router = useRouter();
   const tiptapContent = useMemo(() => toTiptapContent(initialContent), [initialContent]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [contentJson, setContentJson] = useState(() => serializeContent(tiptapContent));
   const [contentText, setContentText] = useState(() => extractPlainTextFromEditorJson(initialContent));
   const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(preferences.autoDetectionEnabled);
   const [isDirty, setIsDirty] = useState(false);
+  const [activeTextAlignment, setActiveTextAlignment] = useState<TextAlignment>("left");
   const [pendingCloseNoteId, setPendingCloseNoteId] = useState<string | null>(null);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
   const dirtyRef = useRef(false);
+  const cacheWriteVersionRef = useRef(0);
+  const savedCacheVersionRef = useRef(0);
   const cacheTimerRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [pasteSuggestion, setPasteSuggestion] = useState<{
@@ -132,17 +253,6 @@ export function RichNoteEditor({
   }, [noteId]);
 
   useEffect(() => {
-    const form = document.getElementById(`note-editor-form-${noteId}`);
-
-    function handleSubmit() {
-      markNoteDirty(noteId, false);
-    }
-
-    form?.addEventListener("submit", handleSubmit);
-    return () => form?.removeEventListener("submit", handleSubmit);
-  }, [noteId]);
-
-  useEffect(() => {
     function handleDirty(event: Event) {
       const detail = (event as CustomEvent<{ noteId: string; dirty: boolean }>).detail;
 
@@ -174,6 +284,7 @@ export function RichNoteEditor({
 
   const editor = useEditor({
     immediatelyRender: false,
+    enableInputRules: preferences.markdownShortcutsEnabled,
     extensions: [
       StarterKit.configure({
         heading: {
@@ -190,6 +301,10 @@ export function RichNoteEditor({
       Placeholder.configure({
         placeholder: "Write technical notes, paste code, or type / for structure later..."
       }),
+      TextAlignmentExtension,
+      ListKeyboardShortcuts.configure({
+        maxDepth: 4
+      }),
       TaskList,
       TaskItem.configure({
         nested: true
@@ -200,8 +315,10 @@ export function RichNoteEditor({
       TableRow,
       TableHeader,
       TableCell,
-      TiptapImage.configure({
-        allowBase64: false
+      ImageBlock.configure({
+        allowBase64: false,
+        inline: true,
+        noteId
       })
     ],
     content: tiptapContent,
@@ -272,6 +389,44 @@ export function RichNoteEditor({
           result: pasteAction.result
         });
         return true;
+      },
+      handleDrop(view, event) {
+        if (!event.dataTransfer) {
+          return false;
+        }
+
+        const movedImagePosition = getDraggedImagePosition(event.dataTransfer);
+
+        if (typeof movedImagePosition === "number") {
+          event.preventDefault();
+          const droppedPosition = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          moveImageInEditor(view, movedImagePosition, droppedPosition);
+          return true;
+        }
+
+        const droppedImages = getDataTransferImageFiles(event.dataTransfer);
+
+        if (droppedImages.length === 0) {
+          return false;
+        }
+
+        event.preventDefault();
+
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          return true;
+        }
+
+        const droppedPosition = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        view.focus();
+
+        void uploadImagesSequentially({
+          files: droppedImages,
+          noteId,
+          view,
+          insertAtSelection: true,
+          position: droppedPosition
+        });
+        return true;
       }
     },
     onCreate({ editor: createdEditor }) {
@@ -284,15 +439,23 @@ export function RichNoteEditor({
         onContentLoaded: (document, text, dirty) => {
           setContentJson(JSON.stringify(document));
           setContentText(text);
+          setActiveTextAlignment(getActiveTextAlignment(createdEditor.state));
           markNoteDirty(noteId, dirty);
         }
       });
     },
+    onSelectionUpdate({ editor: updatedEditor }) {
+      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
+    },
     onUpdate({ editor: updatedEditor }) {
       const document = toEditorDocument(updatedEditor.getJSON());
       const text = updatedEditor.getText({ blockSeparator: "\n" });
+      const cacheWriteVersion = cacheWriteVersionRef.current + 1;
+      cacheWriteVersionRef.current = cacheWriteVersion;
+
       setContentJson(JSON.stringify(document));
       setContentText(text);
+      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
       markNoteDirty(noteId, true);
 
       if (cacheTimerRef.current) {
@@ -300,7 +463,11 @@ export function RichNoteEditor({
       }
 
       cacheTimerRef.current = window.setTimeout(() => {
-        cacheEditorContent({
+        if (cacheWriteVersion <= savedCacheVersionRef.current) {
+          return;
+        }
+
+        void cacheEditorContent({
           noteId,
           workspaceId,
           title,
@@ -309,34 +476,22 @@ export function RichNoteEditor({
           contentText: text,
           localPending: true,
           enqueueForSync: isOffline()
+        }).then(() => {
+          if (cacheWriteVersion <= savedCacheVersionRef.current) {
+            void discardCachedNoteUpdate(noteId);
+          }
         });
       }, 500);
     }
   });
 
-  function handleDroppedImages(event: DragEvent<HTMLDivElement>) {
-    const droppedImages = getDataTransferImageFiles(event.dataTransfer);
-
-    if (!editor || droppedImages.length === 0) {
-      return;
-    }
-
-    event.preventDefault();
-    editor.commands.focus();
-
-    void uploadImagesSequentially({
-      files: droppedImages,
-      noteId,
-      view: editor.view,
-      insertAtSelection: true
-    });
-  }
-
-  async function saveCurrentNote() {
+  const saveCurrentNote = useCallback(async () => {
     if (cacheTimerRef.current) {
       window.clearTimeout(cacheTimerRef.current);
       cacheTimerRef.current = null;
     }
+
+    dispatchNoteSaveStarted(noteId);
 
     const formData = new FormData();
     const currentTitle =
@@ -350,9 +505,23 @@ export function RichNoteEditor({
     formData.set("contentText", currentText);
 
     await updateNoteAction(formData);
+    savedCacheVersionRef.current = cacheWriteVersionRef.current;
     await discardCachedNoteUpdate(noteId);
     markNoteDirty(noteId, false);
-  }
+    router.refresh();
+  }, [contentJson, contentText, editor, noteId, router, title]);
+
+  useEffect(() => {
+    const form = document.getElementById(`note-editor-form-${noteId}`);
+
+    function handleSubmit(event: Event) {
+      event.preventDefault();
+      void saveCurrentNote();
+    }
+
+    form?.addEventListener("submit", handleSubmit);
+    return () => form?.removeEventListener("submit", handleSubmit);
+  }, [noteId, saveCurrentNote]);
 
   async function continueWithoutSaving() {
     if (!pendingCloseNoteId) {
@@ -388,6 +557,11 @@ export function RichNoteEditor({
       className="relative space-y-3"
       data-code-theme={preferences.codeTheme}
       onDragOver={(event) => {
+        if (Array.from(event.dataTransfer.types).includes(internalImageDragType)) {
+          event.preventDefault();
+          return;
+        }
+
         const hasDraggedImage = Array.from(event.dataTransfer.items).some(
           (item) => item.kind === "file" && ["image/png", "image/jpeg", "image/webp"].includes(item.type)
         );
@@ -396,7 +570,6 @@ export function RichNoteEditor({
           event.preventDefault();
         }
       }}
-      onDrop={handleDroppedImages}
     >
       <input type="hidden" name="contentJson" value={contentJson} />
       <input type="hidden" name="contentText" value={contentText} />
@@ -445,6 +618,16 @@ export function RichNoteEditor({
         </ToolbarButton>
         <ToolbarButton label="Divider" onClick={() => editor?.chain().focus().setHorizontalRule().run()}>
           <Minus size={15} />
+        </ToolbarButton>
+        <ToolbarDivider />
+        <ToolbarButton label="Align left" active={activeTextAlignment === "left"} onClick={() => editor?.chain().focus().setTextAlignment("left").run()}>
+          <AlignLeft size={15} />
+        </ToolbarButton>
+        <ToolbarButton label="Align center" active={activeTextAlignment === "center"} onClick={() => editor?.chain().focus().setTextAlignment("center").run()}>
+          <AlignCenter size={15} />
+        </ToolbarButton>
+        <ToolbarButton label="Align right" active={activeTextAlignment === "right"} onClick={() => editor?.chain().focus().setTextAlignment("right").run()}>
+          <AlignRight size={15} />
         </ToolbarButton>
         <ToolbarDivider />
         <ToolbarButton label="Code block" active={editor?.isActive("codeBlock")} onClick={() => editor?.chain().focus().toggleCodeBlock().run()}>
@@ -595,6 +778,14 @@ function markNoteDirty(noteId: string, dirty: boolean) {
   window.dispatchEvent(new CustomEvent("technote:note-dirty", { detail: { noteId, dirty } }));
 }
 
+function dispatchNoteSaveStarted(noteId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent("technote:note-save-start", { detail: { noteId } }));
+}
+
 function ToolbarButton({
   label,
   active = false,
@@ -643,10 +834,81 @@ function getEditorTypographyClass(preferences: EditorPreferences) {
   return `${fontFamilyClass} ${lineHeightClass}`;
 }
 
+function sanitizeTextAlignment(value: unknown): TextAlignment | null {
+  return value === "left" || value === "center" || value === "right" ? value : null;
+}
+
+function getActiveTextAlignment(state: EditorState): TextAlignment {
+  const { selection } = state;
+
+  if (selection instanceof NodeSelection && selection.node.type.name === "image") {
+    const parentTarget = getSelectionParentTextAlignmentTarget(state);
+    return sanitizeTextAlignment(parentTarget?.node.attrs.textAlign) ?? "left";
+  }
+
+  if (selection instanceof NodeSelection && textAlignmentNodeTypes.has(selection.node.type.name)) {
+    return sanitizeTextAlignment(selection.node.attrs.textAlign) ?? "left";
+  }
+
+  const nearbyImage = getNearbyImageTextAlignmentTarget(state);
+
+  if (nearbyImage) {
+    return sanitizeTextAlignment(nearbyImage.node.attrs.textAlign) ?? "left";
+  }
+
+  const { $from } = selection;
+
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const node = $from.node(depth);
+
+    if (textAlignmentNodeTypes.has(node.type.name)) {
+      return sanitizeTextAlignment(node.attrs.textAlign) ?? "left";
+    }
+  }
+
+  return "left";
+}
+
+function getSelectionParentTextAlignmentTarget(state: EditorState) {
+  const { $from } = state.selection;
+
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const node = $from.node(depth);
+
+    if (textAlignmentNodeTypes.has(node.type.name)) {
+      return {
+        node,
+        position: depth === 0 ? 0 : $from.before(depth)
+      };
+    }
+  }
+
+  return null;
+}
+
+function getNearbyImageTextAlignmentTarget(state: EditorState) {
+  const { $from } = state.selection;
+  const nodeBefore = $from.nodeBefore;
+
+  if (nodeBefore?.type.name === "image") {
+    return getSelectionParentTextAlignmentTarget(state);
+  }
+
+  const nodeAfter = $from.nodeAfter;
+
+  if (nodeAfter?.type.name === "image") {
+    return getSelectionParentTextAlignmentTarget(state);
+  }
+
+  return null;
+}
+
 function toTiptapContent(document: EditorDocument): JSONContent {
+  const normalizedDocument = addImageCaretAnchors(normalizeInlineImageDocument(document));
+
   return {
     type: "doc",
-    content: document.content as JSONContent["content"]
+    content: normalizedDocument.content as JSONContent["content"]
   };
 }
 
@@ -655,11 +917,98 @@ function serializeContent(content: JSONContent) {
 }
 
 function toEditorDocument(content: JSONContent): EditorDocument {
-  return {
+  const document = stripImageCaretAnchors({
     ...content,
     type: "doc",
     schemaVersion: 1
-  } as EditorDocument;
+  } as EditorDocument);
+
+  return {
+    ...document,
+    schemaVersion: 1
+  };
+}
+
+function normalizeInlineImageDocument(document: EditorDocument): EditorDocument {
+  return {
+    ...document,
+    content: (document.content ?? []).map((node) =>
+      node.type === "image"
+        ? {
+            type: "paragraph",
+            content: [node]
+          }
+        : node
+    )
+  };
+}
+
+function addImageCaretAnchors(document: EditorDocument): EditorDocument {
+  return {
+    ...document,
+    content: addImageCaretAnchorsToChildren(document.content ?? [])
+  };
+}
+
+function addImageCaretAnchorsToChildren(children: EditorDocument["content"] = []): EditorContentChildren {
+  return children.flatMap((node) => {
+    if (node.type === "image") {
+      return [createImageCaretAnchorNode(), node, createImageCaretAnchorNode()];
+    }
+
+    if ("content" in node && Array.isArray(node.content)) {
+      return [
+        {
+          ...node,
+          content: addImageCaretAnchorsToChildren(removeImageCaretAnchorNodes(node.content))
+        }
+      ];
+    }
+
+    return [node];
+  });
+}
+
+function stripImageCaretAnchors(document: EditorDocument): EditorDocument {
+  return {
+    ...document,
+    content: stripImageCaretAnchorsFromChildren(document.content ?? [])
+  };
+}
+
+function stripImageCaretAnchorsFromChildren(children: EditorDocument["content"] = []): EditorContentChildren {
+  return removeImageCaretAnchorNodes(children).map((node) => {
+    if ("content" in node && Array.isArray(node.content)) {
+      return {
+        ...node,
+        content: stripImageCaretAnchorsFromChildren(node.content)
+      };
+    }
+
+    return node;
+  });
+}
+
+function removeImageCaretAnchorNodes(children: NonNullable<EditorDocument["content"]>): EditorContentChildren {
+  return children
+    .map((node) => {
+      if (node.type !== "text" || typeof node.text !== "string") {
+        return node;
+      }
+
+      return {
+        ...node,
+        text: node.text.replaceAll(imageCaretAnchor, "")
+      };
+    })
+    .filter((node) => node.type !== "text" || node.text);
+}
+
+function createImageCaretAnchorNode() {
+  return {
+    type: "text",
+    text: imageCaretAnchor
+  } as const;
 }
 
 function createDetectedCodeBlock(
@@ -717,21 +1066,26 @@ async function uploadImagesSequentially({
   files,
   noteId,
   view,
-  insertAtSelection
+  insertAtSelection,
+  position
 }: {
   files: File[];
   noteId: string;
   view: EditorView;
   insertAtSelection: boolean;
+  position?: number;
 }) {
+  let nextPosition = position;
+
   for (const file of files) {
     const result = await uploadImageFile(file, noteId);
 
     if (result.src) {
-      insertImageIntoEditor(view, {
+      nextPosition = insertImageIntoEditor(view, {
         src: result.src,
         alt: result.alt ?? file.name,
-        insertAtSelection
+        insertAtSelection,
+        position: nextPosition
       });
     }
   }
@@ -760,43 +1114,169 @@ async function uploadImageFile(file: File, noteId: string) {
 
 function insertImageIntoEditor(
   view: EditorView,
-  image: { src: string; alt: string; insertAtSelection: boolean }
+  image: { src: string; alt: string; insertAtSelection: boolean; position?: number }
 ) {
   const { state, dispatch } = view;
   const imageNode = state.schema.nodes.image?.create({
     src: image.src,
     alt: image.alt,
-    title: "Add caption..."
+    title: "Add caption...",
+    caption: "",
+    width: 420
   });
 
   if (!imageNode) {
-    return;
+    return image.position;
   }
+  const caretAnchorNode = state.schema.text(imageCaretAnchor);
 
   const { $from } = state.selection;
   const parent = $from.parent;
   const insertAfterCurrentBlock = $from.depth > 0 && (parent.type.name === "codeBlock" || parent.textContent.trim().length > 0);
-  const rawPosition = image.insertAtSelection && insertAfterCurrentBlock ? $from.after($from.depth) : state.selection.to;
+  const rawPosition =
+    typeof image.position === "number"
+      ? image.position
+      : image.insertAtSelection && insertAfterCurrentBlock
+        ? $from.after($from.depth)
+        : state.selection.to;
   const position = Math.max(0, Math.min(rawPosition, state.doc.content.size));
 
   try {
-    dispatchImageInsertion(view, imageNode, position);
+    return dispatchImageInsertion(view, imageNode, caretAnchorNode, position);
   } catch {
     try {
-      dispatchImageInsertion(view, imageNode, view.state.doc.content.size);
+      return dispatchImageInsertion(view, imageNode, caretAnchorNode, view.state.doc.content.size);
     } catch {
       // Keep one failed insert from aborting the rest of a multi-image upload.
+      return image.position;
     }
   }
 }
 
-function dispatchImageInsertion(view: EditorView, imageNode: ProseMirrorNode, position: number) {
+function dispatchImageInsertion(
+  view: EditorView,
+  imageNode: ProseMirrorNode,
+  caretAnchorNode: ProseMirrorNode,
+  position: number
+) {
   const { state, dispatch } = view;
   const safePosition = Math.max(0, Math.min(position, state.doc.content.size));
-  const tr = state.tr.insert(safePosition, imageNode);
-  const nextPosition = Math.min(safePosition + imageNode.nodeSize, tr.doc.content.size);
+  const resolvedPosition = state.doc.resolve(safePosition);
+  const canInsertInlineImage = resolvedPosition.parent.canReplaceWith(
+    resolvedPosition.index(),
+    resolvedPosition.index(),
+    imageNode.type
+  );
+
+  if (!canInsertInlineImage) {
+    const paragraphWithAnchor = state.schema.nodes.paragraph?.create(null, [
+      caretAnchorNode,
+      imageNode,
+      state.schema.text(imageCaretAnchor)
+    ]);
+
+    if (!paragraphWithAnchor) {
+      return safePosition;
+    }
+
+    const tr = state.tr.insert(safePosition, paragraphWithAnchor);
+    const nextPosition = Math.min(safePosition + imageNode.nodeSize + caretAnchorNode.nodeSize + 1, tr.doc.content.size);
+    dispatch(tr.setSelection(Selection.near(tr.doc.resolve(nextPosition))).scrollIntoView());
+    return nextPosition;
+  }
+
+  const tr = state.tr.insert(safePosition, [caretAnchorNode, imageNode, state.schema.text(imageCaretAnchor)]);
+  const nextPosition = Math.min(safePosition + imageNode.nodeSize + caretAnchorNode.nodeSize, tr.doc.content.size);
 
   dispatch(tr.setSelection(Selection.near(tr.doc.resolve(nextPosition))).scrollIntoView());
+  return nextPosition;
+}
+
+function getDraggedImagePosition(dataTransfer: DataTransfer) {
+  const rawPosition = dataTransfer.getData(internalImageDragType);
+
+  if (!rawPosition) {
+    return null;
+  }
+
+  const position = Number(rawPosition);
+  return Number.isInteger(position) && position >= 0 ? position : null;
+}
+
+function moveImageInEditor(view: EditorView, sourcePosition: number, targetPosition: number | undefined) {
+  const { state, dispatch } = view;
+  const imageNode = state.doc.nodeAt(sourcePosition);
+
+  if (!imageNode || imageNode.type.name !== "image") {
+    return;
+  }
+
+  const sourceRange = getImageMoveDeleteRange(state, sourcePosition, imageNode);
+  const rawTargetPosition = Math.max(0, Math.min(targetPosition ?? state.selection.to, state.doc.content.size));
+
+  if (rawTargetPosition >= sourceRange.from && rawTargetPosition <= sourceRange.to) {
+    return;
+  }
+
+  let transaction = state.tr.delete(sourceRange.from, sourceRange.to);
+  const mappedTargetPosition = Math.max(
+    0,
+    Math.min(transaction.mapping.map(rawTargetPosition, -1), transaction.doc.content.size)
+  );
+  transaction = insertMovedImage(transaction, imageNode, mappedTargetPosition);
+
+  dispatch(transaction.scrollIntoView());
+  view.focus();
+}
+
+function getImageMoveDeleteRange(state: EditorState, imagePosition: number, imageNode: ProseMirrorNode) {
+  let from = imagePosition;
+  let to = imagePosition + imageNode.nodeSize;
+  const beforeImage = state.doc.resolve(imagePosition).nodeBefore;
+  const afterImage = state.doc.resolve(to).nodeAfter;
+
+  if (beforeImage?.isText && beforeImage.text?.endsWith(imageCaretAnchor)) {
+    from -= 1;
+  }
+
+  if (afterImage?.isText && afterImage.text?.startsWith(imageCaretAnchor)) {
+    to += 1;
+  }
+
+  return {
+    from: Math.max(0, from),
+    to: Math.min(to, state.doc.content.size)
+  };
+}
+
+function insertMovedImage(transaction: Transaction, imageNode: ProseMirrorNode, position: number) {
+  const schema = transaction.doc.type.schema;
+  const beforeAnchor = schema.text(imageCaretAnchor);
+  const afterAnchor = schema.text(imageCaretAnchor);
+  const safePosition = Math.max(0, Math.min(position, transaction.doc.content.size));
+  const resolvedPosition = transaction.doc.resolve(safePosition);
+  const canInsertInlineImage = resolvedPosition.parent.canReplaceWith(
+    resolvedPosition.index(),
+    resolvedPosition.index(),
+    imageNode.type
+  );
+
+  if (!canInsertInlineImage) {
+    const paragraph = schema.nodes.paragraph?.create(null, [beforeAnchor, imageNode, afterAnchor]);
+
+    if (!paragraph) {
+      return transaction;
+    }
+
+    const nextTransaction = transaction.insert(safePosition, paragraph);
+    const nextPosition = Math.min(safePosition + beforeAnchor.nodeSize + imageNode.nodeSize + 1, nextTransaction.doc.content.size);
+    return nextTransaction.setSelection(Selection.near(nextTransaction.doc.resolve(nextPosition)));
+  }
+
+  const fragment = Fragment.fromArray([beforeAnchor, imageNode, afterAnchor]);
+  const nextTransaction = transaction.insert(safePosition, fragment);
+  const nextPosition = Math.min(safePosition + beforeAnchor.nodeSize + imageNode.nodeSize, nextTransaction.doc.content.size);
+  return nextTransaction.setSelection(Selection.near(nextTransaction.doc.resolve(nextPosition)));
 }
 
 function getClipboardDataImageFiles(event: ClipboardEvent) {
@@ -873,7 +1353,7 @@ async function hydrateEditorFromCache({
     const document = cachedNote.contentJson ?? toEditorDocument(editor.getJSON());
 
     if (cachedNote.contentJson) {
-      editor.commands.setContent(toTiptapContent(cachedNote.contentJson), false);
+      editor.commands.setContent(toTiptapContent(cachedNote.contentJson), { emitUpdate: false });
     }
 
     onContentLoaded(document, cachedNote.contentText, true);
@@ -883,7 +1363,7 @@ async function hydrateEditorFromCache({
   const document = toEditorDocument(editor.getJSON());
   const text = editor.getText({ blockSeparator: "\n" });
   onContentLoaded(document, text, false);
-  cacheEditorContent({
+  void cacheEditorContent({
     noteId,
     workspaceId,
     title,
@@ -927,7 +1407,7 @@ function cacheEditorContent({
     syncStatus: localPending ? "local_pending" : "synced"
   } as const;
 
-  void putCachedNote(note)
+  return putCachedNote(note)
     .then(() => {
       if (enqueueForSync) {
         return enqueueSyncOperation(createUpdateNoteOperation(note));
