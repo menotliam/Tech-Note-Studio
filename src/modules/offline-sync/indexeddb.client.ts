@@ -76,6 +76,21 @@ export async function deleteSyncOperation(operationId: string) {
   database.close();
 }
 
+export async function discardCachedNoteUpdate(noteId: string) {
+  if (!canUseIndexedDb()) {
+    return;
+  }
+
+  const database = await openOfflineDatabase();
+  try {
+    await deleteRecord(database, queueStoreName, `UPDATE_NOTE:${noteId}`);
+    await deleteRecord(database, notesStoreName, noteId);
+  } finally {
+    database.close();
+  }
+  dispatchQueueUpdated();
+}
+
 export async function markCachedNoteSynced(noteId: string) {
   const note = await getCachedNote(noteId);
 

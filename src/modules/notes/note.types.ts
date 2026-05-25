@@ -6,6 +6,7 @@ export type NoteSummary = {
   contentText: string;
   isPinned: boolean;
   isArchived: boolean;
+  deletedAt: string | null;
   updatedAt: string;
   folderId: string | null;
   tagIds: string[];

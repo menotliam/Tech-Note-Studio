@@ -8,6 +8,7 @@ import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-ext
 import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
 import { logSecurityEvent } from "@/modules/security/security.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
+import { hardDeleteTrashedFoldersByIds, hardDeleteTrashedNotesByIds } from "./note-lifecycle.service";
 import { noteIdSchema, renameNoteSchema, updateNoteSchema } from "./note.schemas";
 
 export async function getAuthedFoundation() {
@@ -149,7 +150,7 @@ export async function archiveNoteAction(formData: FormData) {
 
   const { error } = await supabase
     .from("notes")
-    .update({ is_archived: true })
+    .update({ is_archived: true, is_pinned: false })
     .eq("id", noteId)
     .eq("owner_id", user.id);
 
@@ -158,7 +159,27 @@ export async function archiveNoteAction(formData: FormData) {
   }
 
   revalidatePath("/");
+  revalidatePath("/archive");
   redirect("/");
+}
+
+export async function restoreArchivedNoteAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ is_archived: false })
+    .eq("id", noteId)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/archive");
 }
 
 export async function deleteNoteAction(formData: FormData) {
@@ -167,7 +188,7 @@ export async function deleteNoteAction(formData: FormData) {
 
   const { error } = await supabase
     .from("notes")
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: new Date().toISOString(), is_archived: false, is_pinned: false })
     .eq("id", noteId)
     .eq("owner_id", user.id);
 
@@ -176,5 +197,105 @@ export async function deleteNoteAction(formData: FormData) {
   }
 
   revalidatePath("/");
+  revalidatePath("/archive");
+  revalidatePath("/trash");
   redirect("/");
+}
+
+export async function moveNoteToTrashAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ deleted_at: new Date().toISOString(), is_archived: false, is_pinned: false })
+    .eq("id", noteId)
+    .eq("owner_id", user.id);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/archive");
+  revalidatePath("/trash");
+}
+
+export async function restoreTrashedNoteAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+
+  const { error } = await supabase
+    .from("notes")
+    .update({ deleted_at: null, is_archived: false })
+    .eq("id", noteId)
+    .eq("owner_id", user.id)
+    .not("deleted_at", "is", null);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidatePath("/");
+  revalidatePath("/archive");
+  revalidatePath("/trash");
+}
+
+export async function deleteNoteForeverAction(formData: FormData) {
+  const noteId = noteIdSchema.parse(formData.get("noteId"));
+  const { supabase, user } = await getAuthedFoundation();
+  const { data: note, error: noteError } = await supabase
+    .from("notes")
+    .select("id")
+    .eq("id", noteId)
+    .eq("owner_id", user.id)
+    .not("deleted_at", "is", null)
+    .maybeSingle();
+
+  if (noteError) {
+    throw noteError;
+  }
+
+  if (!note) {
+    throw new Error("Only trashed notes can be deleted forever.");
+  }
+
+  await hardDeleteTrashedNotesByIds(supabase, [noteId], user.id);
+  revalidatePath("/trash");
+}
+
+export async function deleteAllTrashAction() {
+  const { supabase, user } = await getAuthedFoundation();
+  const { data: notes, error: notesError } = await supabase
+    .from("notes")
+    .select("id")
+    .eq("owner_id", user.id)
+    .not("deleted_at", "is", null);
+
+  if (notesError) {
+    throw notesError;
+  }
+
+  const { data: folders, error: foldersError } = await supabase
+    .from("folders")
+    .select("id")
+    .eq("owner_id", user.id)
+    .not("deleted_at", "is", null);
+
+  if (foldersError) {
+    throw foldersError;
+  }
+
+  await hardDeleteTrashedNotesByIds(
+    supabase,
+    (notes as Array<{ id: string }>).map((note) => note.id),
+    user.id
+  );
+  await hardDeleteTrashedFoldersByIds(
+    supabase,
+    (folders as Array<{ id: string }>).map((folder) => folder.id),
+    user.id
+  );
+
+  revalidatePath("/trash");
 }

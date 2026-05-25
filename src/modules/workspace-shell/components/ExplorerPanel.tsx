@@ -13,6 +13,7 @@ import {
   FolderPlus,
   PanelLeftClose,
   Pin,
+  RotateCcw,
   Search,
   Tags,
   Trash2,
@@ -22,8 +23,13 @@ import { MultiNoteExportForm } from "@/modules/export/components/MultiNoteExport
 import {
   archiveNoteAction,
   createBlankNoteAction,
+  deleteAllTrashAction,
   deleteNoteAction,
+  deleteNoteForeverAction,
+  moveNoteToTrashAction,
   renameNoteAction,
+  restoreArchivedNoteAction,
+  restoreTrashedNoteAction,
   togglePinNoteAction
 } from "@/modules/notes/note.actions";
 import type { NoteDetail, NoteSummary } from "@/modules/notes/note.types";
@@ -36,8 +42,11 @@ import {
   createNoteInFolderAction,
   createTagAction,
   deleteFolderAction,
-  pinFolderNotesAction,
+  deleteFolderForeverAction,
   renameFolderAction,
+  restoreArchivedFolderAction,
+  restoreTrashedFolderAction,
+  togglePinFolderAction,
   toggleTagOnNoteAction
 } from "@/modules/organization/organization.actions";
 import type { FolderSummary, TagSummary } from "@/modules/organization/organization.types";
@@ -61,7 +70,8 @@ export function ExplorerPanel({
   searchQuery,
   activeFolderId,
   activeTagId,
-  workspace
+  workspace,
+  workspaceView = "active"
 }: {
   notes: NoteSummary[];
   templates: TemplateSummary[];
@@ -72,8 +82,10 @@ export function ExplorerPanel({
   activeFolderId?: string;
   activeTagId?: string;
   workspace: WorkspaceSummary;
+  workspaceView?: "active" | "archive" | "trash";
 }) {
   const tree = buildFolderTree(folders, notes);
+  const visibleTree = workspaceView === "active" ? tree : filterEmptyFolders(tree);
   const searchResults = useMemo(() => searchNotes(notes, searchQuery), [notes, searchQuery]);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -93,6 +105,10 @@ export function ExplorerPanel({
   }
 
   function moveDroppedNoteToRoot(event: ReactDragEvent) {
+    if (workspaceView !== "active") {
+      return;
+    }
+
     const noteId = event.dataTransfer.getData("application/x-technote-note");
     const folderId = event.dataTransfer.getData("application/x-technote-folder");
 
@@ -135,48 +151,65 @@ export function ExplorerPanel({
         <section
           data-activity-panel="explorer"
           className="hidden min-h-full space-y-3"
-          onDragOver={(event) => event.preventDefault()}
+          onDragOver={(event) => {
+            if (workspaceView === "active") {
+              event.preventDefault();
+            }
+          }}
           onDrop={moveDroppedNoteToRoot}
         >
           <div
             className="flex items-center gap-2 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-            onDragOver={(event) => event.preventDefault()}
+            onDragOver={(event) => {
+              if (workspaceView === "active") {
+                event.preventDefault();
+              }
+            }}
             onDrop={moveDroppedNoteToRoot}
           >
             <Folder size={14} />
             <span className="truncate">{workspace.name}</span>
             <div className="ml-auto flex items-center gap-1">
-              <form action={createBlankNoteAction}>
-                <button
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                  aria-label="Create note"
-                  title="Create note"
-                >
-                  <FilePlus2 size={15} />
-                </button>
-              </form>
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Create folder"
-                title="Create folder"
-                onClick={() => setCreatingFolder(true)}
-              >
-                <FolderPlus size={15} />
-              </button>
-              <button
-                type="button"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Collapse all folders"
-                title="Collapse all folders"
-                onClick={collapseAllFolders}
-              >
-                <ChevronsDownUp size={15} />
-              </button>
+              {workspaceView === "active" ? (
+                <>
+                  <form action={createBlankNoteAction}>
+                    <button
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label="Create note"
+                      title="Create note"
+                    >
+                      <FilePlus2 size={15} />
+                    </button>
+                  </form>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Create folder"
+                    title="Create folder"
+                    onClick={() => setCreatingFolder(true)}
+                  >
+                    <FolderPlus size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Collapse all folders"
+                    title="Collapse all folders"
+                    onClick={collapseAllFolders}
+                  >
+                    <ChevronsDownUp size={15} />
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
 
-          {creatingFolder ? (
+          <LifecycleNavigation
+            activeView={workspaceView}
+            hasTrashItems={workspaceView === "trash" && (notes.length > 0 || folders.length > 0)}
+          />
+
+          {creatingFolder && workspaceView === "active" ? (
             <form
               action={createFolderAction}
               className="px-2"
@@ -200,16 +233,21 @@ export function ExplorerPanel({
 
           <div
             className="min-h-20 space-y-0.5"
-            onDragOver={(event) => event.preventDefault()}
+            onDragOver={(event) => {
+              if (workspaceView === "active") {
+                event.preventDefault();
+              }
+            }}
             onDrop={moveDroppedNoteToRoot}
           >
-            {tree.folders.map((folder) => (
+            {visibleTree.folders.map((folder) => (
               <FolderNode
                 key={folder.id}
                 folder={folder}
                 tags={tags}
                 selectedNoteId={selectedNote?.id}
                 activeFolderId={activeFolderId}
+                workspaceView={workspaceView}
                 collapsedFolders={collapsedFolders}
                 setCollapsedFolders={setCollapsedFolders}
                 moveNoteToFolder={moveNoteToFolder}
@@ -224,12 +262,13 @@ export function ExplorerPanel({
                 }}
               />
             ))}
-            {tree.unfiledNotes.map((note) => (
+            {visibleTree.unfiledNotes.map((note) => (
               <NoteNode
                 key={note.id}
                 note={note}
                 tags={tags}
                 active={selectedNote?.id === note.id}
+                workspaceView={workspaceView}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
@@ -259,6 +298,7 @@ export function ExplorerPanel({
                     note={note}
                     tags={tags}
                     active={selectedNote?.id === note.id}
+                    workspaceView={workspaceView}
                     onContextMenu={(event) => {
                       event.preventDefault();
                       setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
@@ -340,6 +380,7 @@ export function ExplorerPanel({
           menu={contextMenu}
           tags={tags}
           activeNoteId={selectedNote?.id}
+          workspaceView={workspaceView}
           onClose={() => setContextMenu(null)}
         />
       ) : null}
@@ -352,6 +393,7 @@ function FolderNode({
   tags,
   selectedNoteId,
   activeFolderId,
+  workspaceView,
   collapsedFolders,
   setCollapsedFolders,
   moveNoteToFolder,
@@ -364,6 +406,7 @@ function FolderNode({
   tags: TagSummary[];
   selectedNoteId?: string;
   activeFolderId?: string;
+  workspaceView: "active" | "archive" | "trash";
   collapsedFolders: Set<string>;
   setCollapsedFolders: (value: Set<string>) => void;
   moveNoteToFolder: (noteId: string, folderId: string | null) => void;
@@ -376,14 +419,24 @@ function FolderNode({
 
   return (
     <div
-      draggable
+      draggable={workspaceView === "active"}
       onDragStart={(event) => {
+        if (workspaceView !== "active") {
+          return;
+        }
         event.stopPropagation();
         event.dataTransfer.setData("application/x-technote-folder", folder.id);
         event.dataTransfer.effectAllowed = "move";
       }}
-      onDragOver={(event) => event.preventDefault()}
+      onDragOver={(event) => {
+        if (workspaceView === "active") {
+          event.preventDefault();
+        }
+      }}
       onDrop={(event) => {
+        if (workspaceView !== "active") {
+          return;
+        }
         const noteId = event.dataTransfer.getData("application/x-technote-note");
         const movingFolderId = event.dataTransfer.getData("application/x-technote-folder");
         if (noteId) {
@@ -404,10 +457,12 @@ function FolderNode({
     >
       <div className="grid grid-cols-[minmax(0,1fr)_24px] items-center">
         <ExplorerLink
-          href={`/?folder=${folder.id}`}
+          href={workspaceView === "active" ? `/?folder=${folder.id}` : undefined}
           label={folder.name}
           active={activeFolderId === folder.id}
           icon={<Folder size={14} />}
+          detail={getFolderDetail(folder, workspaceView)}
+          pinned={folder.isPinned}
           depth={depth}
         />
         <button
@@ -436,6 +491,7 @@ function FolderNode({
               tags={tags}
               selectedNoteId={selectedNoteId}
               activeFolderId={activeFolderId}
+              workspaceView={workspaceView}
               collapsedFolders={collapsedFolders}
               setCollapsedFolders={setCollapsedFolders}
               moveNoteToFolder={moveNoteToFolder}
@@ -451,6 +507,7 @@ function FolderNode({
               note={note}
               tags={tags}
               active={selectedNoteId === note.id}
+              workspaceView={workspaceView}
               depth={depth + 1}
               onContextMenu={(event) => openNoteContextMenu(event, note)}
             />
@@ -465,19 +522,24 @@ function NoteNode({
   note,
   tags,
   active,
+  workspaceView,
   onContextMenu,
   depth = 0
 }: {
   note: NoteSummary;
   tags: TagSummary[];
   active: boolean;
+  workspaceView: "active" | "archive" | "trash";
   onContextMenu: (event: MouseEvent) => void;
   depth?: number;
 }) {
   return (
     <div
-      draggable
+      draggable={workspaceView === "active"}
       onDragStart={(event) => {
+        if (workspaceView !== "active") {
+          return;
+        }
         event.stopPropagation();
         event.dataTransfer.setData("application/x-technote-note", note.id);
         event.dataTransfer.effectAllowed = "move";
@@ -488,12 +550,13 @@ function NoteNode({
       }}
     >
       <ExplorerLink
-        href={`/notes/${note.id}`}
+        href={workspaceView === "active" ? `/notes/${note.id}` : undefined}
         label={note.title}
         active={active}
         color={getPrimaryTagColor(note, tags)}
         icon={<FileText size={14} />}
-        detail={note.contentText || formatNoteTimestamp(note.updatedAt)}
+        detail={getNoteDetail(note, workspaceView)}
+        pinned={note.isPinned}
         depth={depth}
       />
     </div>
@@ -504,11 +567,13 @@ function ExplorerContextMenu({
   menu,
   tags,
   activeNoteId,
+  workspaceView,
   onClose
 }: {
   menu: NonNullable<ContextMenuState>;
   tags: TagSummary[];
   activeNoteId?: string;
+  workspaceView: "active" | "archive" | "trash";
   onClose: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -524,7 +589,39 @@ function ExplorerContextMenu({
       onClick={(event) => event.stopPropagation()}
     >
       {menu.type === "note" ? (
-        <>
+        workspaceView === "archive" ? (
+          <>
+            <form action={restoreArchivedNoteAction} onSubmit={onClose}>
+              <input type="hidden" name="noteId" value={menu.note.id} />
+              <MenuSubmit icon={<RotateCcw size={14} />}>Restore to workspace</MenuSubmit>
+            </form>
+            <form action={moveNoteToTrashAction} onSubmit={() => closeNoteLocally(menu.note.id, onClose)}>
+              <input type="hidden" name="noteId" value={menu.note.id} />
+              <MenuSubmit danger icon={<Trash2 size={14} />}>Move to Trash</MenuSubmit>
+            </form>
+          </>
+        ) : workspaceView === "trash" ? (
+          <>
+            <form action={restoreTrashedNoteAction} onSubmit={onClose}>
+              <input type="hidden" name="noteId" value={menu.note.id} />
+              <MenuSubmit icon={<RotateCcw size={14} />}>Restore</MenuSubmit>
+            </form>
+            <form
+              action={deleteNoteForeverAction}
+              onSubmit={(event) => {
+                if (!window.confirm("Delete this note forever? This cannot be undone.")) {
+                  event.preventDefault();
+                  return;
+                }
+                closeNoteLocally(menu.note.id, onClose);
+              }}
+            >
+              <input type="hidden" name="noteId" value={menu.note.id} />
+              <MenuSubmit danger icon={<Trash2 size={14} />}>Delete forever</MenuSubmit>
+            </form>
+          </>
+        ) : (
+          <>
           <MenuLink href={`/notes/${activeNoteId ?? menu.note.id}?split=${menu.note.id}`}>Split to the side</MenuLink>
           <div className="group relative">
             <MenuButton>Tags</MenuButton>
@@ -578,19 +675,53 @@ function ExplorerContextMenu({
             <MenuSubmit danger icon={<Trash2 size={14} />}>Delete</MenuSubmit>
           </form>
         </>
+        )
       ) : (
-        <>
+        workspaceView === "archive" ? (
+          <>
+            <form action={restoreArchivedFolderAction} onSubmit={onClose}>
+              <input type="hidden" name="folderId" value={menu.folder.id} />
+              <MenuSubmit icon={<RotateCcw size={14} />}>Restore folder</MenuSubmit>
+            </form>
+            <form action={deleteFolderAction} onSubmit={onClose}>
+              <input type="hidden" name="folderId" value={menu.folder.id} />
+              <MenuSubmit danger icon={<Trash2 size={14} />}>Move folder to Trash</MenuSubmit>
+            </form>
+          </>
+        ) : workspaceView === "trash" ? (
+          <>
+            <form action={restoreTrashedFolderAction} onSubmit={onClose}>
+              <input type="hidden" name="folderId" value={menu.folder.id} />
+              <MenuSubmit icon={<RotateCcw size={14} />}>Restore folder</MenuSubmit>
+            </form>
+            <form
+              action={deleteFolderForeverAction}
+              onSubmit={(event) => {
+                if (!window.confirm("Delete this folder forever? Notes inside it will also be deleted.")) {
+                  event.preventDefault();
+                  return;
+                }
+                onClose();
+              }}
+            >
+              <input type="hidden" name="folderId" value={menu.folder.id} />
+              <MenuSubmit danger icon={<Trash2 size={14} />}>Delete folder forever</MenuSubmit>
+            </form>
+          </>
+        ) : (
+          <>
           <form action={createNoteInFolderAction} onSubmit={onClose}>
             <input type="hidden" name="folderId" value={menu.folder.id} />
             <MenuSubmit icon={<FilePlus2 size={14} />}>New note</MenuSubmit>
           </form>
-          <form action={pinFolderNotesAction} onSubmit={onClose}>
+          <form action={togglePinFolderAction} onSubmit={onClose}>
             <input type="hidden" name="folderId" value={menu.folder.id} />
-            <MenuSubmit icon={<Pin size={14} />}>Pin notes recursively</MenuSubmit>
+            <input type="hidden" name="isPinned" value={String(menu.folder.isPinned)} />
+            <MenuSubmit icon={<Pin size={14} />}>{menu.folder.isPinned ? "Unpin folder" : "Pin folder"}</MenuSubmit>
           </form>
           <form action={archiveFolderNotesAction} onSubmit={onClose}>
             <input type="hidden" name="folderId" value={menu.folder.id} />
-            <MenuSubmit icon={<Archive size={14} />}>Archive notes recursively</MenuSubmit>
+            <MenuSubmit icon={<Archive size={14} />}>Archive folder</MenuSubmit>
           </form>
           {renaming ? (
             <RenameForm
@@ -609,6 +740,7 @@ function ExplorerContextMenu({
             <MenuSubmit danger icon={<Trash2 size={14} />}>Delete folder</MenuSubmit>
           </form>
         </>
+        )
       )}
     </div>
   );
@@ -626,28 +758,26 @@ function ExplorerLink({
   color,
   icon,
   detail,
+  pinned,
   depth = 0
 }: {
-  href: string;
+  href?: string;
   label: string;
   active: boolean;
   color?: string | null;
   icon?: ReactNode;
   detail?: string;
+  pinned?: boolean;
   depth?: number;
 }) {
-  return (
-    <Link
-      href={href}
-      className={
-        "group grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-md py-1.5 pr-2 transition " +
-        (active
-          ? "bg-muted text-foreground shadow-[inset_3px_0_0_hsl(var(--primary))]"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground")
-      }
-      style={{ paddingLeft: `${8 + depth * 14}px` }}
-      title={label}
-    >
+  const className =
+    "group relative grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-md py-1.5 transition " +
+    (pinned ? "pr-7 " : "pr-2 ") +
+    (active
+      ? "bg-muted text-foreground shadow-[inset_3px_0_0_hsl(var(--primary))]"
+      : "text-muted-foreground hover:bg-muted hover:text-foreground");
+  const content = (
+    <>
       <span className="relative flex h-4 w-4 items-center justify-center">
         {color ? <span className="absolute h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} /> : icon}
       </span>
@@ -655,8 +785,133 @@ function ExplorerLink({
         <span className="block truncate text-xs font-medium">{label}</span>
         {detail ? <span className="block truncate text-[11px] text-muted-foreground">{detail}</span> : null}
       </span>
+      {pinned ? (
+        <Pin
+          size={11}
+          className="absolute right-2 top-1.5 fill-primary text-primary"
+          aria-label="Pinned"
+        />
+      ) : null}
+    </>
+  );
+
+  if (!href) {
+    return (
+      <div className={className} style={{ paddingLeft: `${8 + depth * 14}px` }} title={label}>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={href}
+      className={className}
+      style={{ paddingLeft: `${8 + depth * 14}px` }}
+      title={label}
+    >
+      {content}
     </Link>
   );
+}
+
+function LifecycleNavigation({
+  activeView,
+  hasTrashItems
+}: {
+  activeView: "active" | "archive" | "trash";
+  hasTrashItems: boolean;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-background p-1">
+        <LifecycleLink href="/" label="Active" active={activeView === "active"} icon={<FileText size={13} />} />
+        <LifecycleLink href="/archive" label="Archive" active={activeView === "archive"} icon={<Archive size={13} />} />
+        <LifecycleLink href="/trash" label="Trash" active={activeView === "trash"} icon={<Trash2 size={13} />} />
+      </div>
+      {activeView === "trash" && hasTrashItems ? (
+        <form
+          action={deleteAllTrashAction}
+          onSubmit={(event) => {
+            if (!window.confirm("Delete all Trash items forever? This cannot be undone.")) {
+              event.preventDefault();
+            }
+          }}
+        >
+          <button className="flex h-8 w-full items-center justify-center gap-2 rounded-md border border-red-500/40 text-xs font-medium text-red-400 hover:bg-red-500/10">
+            <Trash2 size={13} />
+            Delete all Trash
+          </button>
+        </form>
+      ) : null}
+    </div>
+  );
+}
+
+function LifecycleLink({
+  href,
+  label,
+  active,
+  icon
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  icon: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={
+        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition " +
+        (active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
+      }
+    >
+      {icon}
+      <span className="truncate">{label}</span>
+    </Link>
+  );
+}
+
+function getNoteDetail(note: NoteSummary, workspaceView: "active" | "archive" | "trash") {
+  if (workspaceView === "trash") {
+    return getTrashRetentionLabel(note.deletedAt);
+  }
+
+  if (workspaceView === "archive") {
+    return `Archived - ${formatNoteTimestamp(note.updatedAt)}`;
+  }
+
+  return note.contentText || formatNoteTimestamp(note.updatedAt);
+}
+
+function getFolderDetail(folder: FolderTreeNode, workspaceView: "active" | "archive" | "trash") {
+  if (workspaceView === "trash") {
+    return getTrashRetentionLabel(folder.deletedAt);
+  }
+
+  if (workspaceView === "archive") {
+    return "Archived folder";
+  }
+
+  return undefined;
+}
+
+function getTrashRetentionLabel(deletedAt: string | null) {
+  if (!deletedAt) {
+    return "Pending cleanup";
+  }
+
+  const deletedTime = new Date(deletedAt).getTime();
+
+  if (Number.isNaN(deletedTime)) {
+    return "Pending cleanup";
+  }
+
+  const cleanupTime = deletedTime + 30 * 24 * 60 * 60 * 1000;
+  const daysRemaining = Math.max(0, Math.ceil((cleanupTime - Date.now()) / (24 * 60 * 60 * 1000)));
+
+  return `${daysRemaining} days remaining`;
 }
 
 function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
@@ -680,6 +935,26 @@ function searchNotes(notes: NoteSummary[], searchQuery: string) {
       note.title.toLowerCase().includes(query) ||
       note.contentText.toLowerCase().includes(query)
   );
+}
+
+function filterEmptyFolders(tree: { folders: FolderTreeNode[]; unfiledNotes: NoteSummary[] }) {
+  return {
+    folders: tree.folders.map(filterFolderNode).filter((folder): folder is FolderTreeNode => Boolean(folder)),
+    unfiledNotes: tree.unfiledNotes
+  };
+}
+
+function filterFolderNode(folder: FolderTreeNode): FolderTreeNode | null {
+  const children = folder.children.map(filterFolderNode).filter((child): child is FolderTreeNode => Boolean(child));
+
+  if (children.length === 0 && folder.notes.length === 0) {
+    return null;
+  }
+
+  return {
+    ...folder,
+    children
+  };
 }
 
 function MenuLink({ href, children }: { href: string; children: ReactNode }) {

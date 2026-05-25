@@ -40,7 +40,7 @@ export function buildFolderTree(folders: FolderSummary[], notes: NoteSummary[]) 
 
   return {
     folders: sortFolderTree(rootFolders),
-    unfiledNotes
+    unfiledNotes: [...unfiledNotes].sort(compareNotes)
   };
 }
 
@@ -74,12 +74,28 @@ export function countApproximateEditorLines(note?: CurrentNoteForChrome | null) 
 
 function sortFolderTree(nodes: FolderTreeNode[]): FolderTreeNode[] {
   return nodes
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(compareFolders)
     .map((node) => ({
       ...node,
       children: sortFolderTree(node.children),
-      notes: [...node.notes].sort((a, b) => a.title.localeCompare(b.title))
+      notes: [...node.notes].sort(compareNotes)
     }));
+}
+
+function compareFolders(a: FolderTreeNode, b: FolderTreeNode) {
+  if (a.isPinned !== b.isPinned) {
+    return a.isPinned ? -1 : 1;
+  }
+
+  return a.name.localeCompare(b.name);
+}
+
+function compareNotes(a: NoteSummary, b: NoteSummary) {
+  if (a.isPinned !== b.isPinned) {
+    return a.isPinned ? -1 : 1;
+  }
+
+  return a.title.localeCompare(b.title);
 }
 
 function extractHeading(node: EditorNode | EditorTextNode, index: number): OutlineItem[] {

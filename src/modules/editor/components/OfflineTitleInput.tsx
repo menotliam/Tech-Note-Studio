@@ -19,6 +19,7 @@ export function OfflineTitleInput({
   initialContentText: string;
   updatedAt: string;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const cacheTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -29,8 +30,30 @@ export function OfflineTitleInput({
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void getCachedNote(noteId)
+      .then((cachedNote) => {
+        if (cancelled || cachedNote?.syncStatus !== "local_pending" || !inputRef.current) {
+          return;
+        }
+
+        inputRef.current.value = cachedNote.title;
+        window.dispatchEvent(new CustomEvent("technote:note-dirty", { detail: { noteId, dirty: true } }));
+      })
+      .catch(() => {
+        // Local draft hydration is best-effort.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [noteId]);
+
   return (
     <input
+      ref={inputRef}
       name="title"
       data-note-id={noteId}
       className="w-full bg-transparent text-4xl font-bold outline-none"
@@ -90,6 +113,7 @@ async function cacheTitleChange({
     await putCachedNote(baseNote);
   }
 
+  const shouldQueueSync = isOffline();
   const note = {
     ...baseNote,
     title,
@@ -98,5 +122,11 @@ async function cacheTitleChange({
   };
 
   await putCachedNote(note);
-  await enqueueSyncOperation(createUpdateNoteOperation(note));
+  if (shouldQueueSync) {
+    await enqueueSyncOperation(createUpdateNoteOperation(note));
+  }
+}
+
+function isOffline() {
+  return typeof navigator !== "undefined" && !navigator.onLine;
 }

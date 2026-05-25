@@ -7,7 +7,10 @@ export type SecurityEventType =
   | "FILE_UPLOAD_REJECTED"
   | "NOTE_UPDATE_FAILED"
   | "PREFERENCES_UPDATED"
-  | "PREFERENCES_UPDATE_REJECTED";
+  | "PREFERENCES_UPDATE_REJECTED"
+  | "TRASH_CLEANUP_STARTED"
+  | "TRASH_CLEANUP_COMPLETED"
+  | "TRASH_CLEANUP_FAILED";
 
 export type SecurityEventInput = {
   userId: string | null;

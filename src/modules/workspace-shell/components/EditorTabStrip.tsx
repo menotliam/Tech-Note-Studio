@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Circle, GitCompareArrows, X } from "lucide-react";
@@ -22,6 +22,7 @@ export function EditorTabStrip({
 }) {
   const router = useRouter();
   const [tabs, setTabs] = useState<OpenNoteTab[]>([]);
+  const closingActiveNoteIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setTabs(loadOpenNoteTabs());
@@ -35,17 +36,16 @@ export function EditorTabStrip({
         return;
       }
 
-      setTabs((current) => {
-        const next = current.filter((candidate) => candidate.noteId !== closingNoteId);
-        saveOpenNoteTabs(next);
+      const next = loadOpenNoteTabs().filter((candidate) => candidate.noteId !== closingNoteId);
+      saveOpenNoteTabs(next);
 
-        if (closingNoteId === currentNote?.id) {
-          router.push(getCloseHref(next));
-          return current;
-        }
+      if (closingNoteId === currentNote?.id) {
+        closingActiveNoteIdRef.current = closingNoteId;
+        router.push(getCloseHref(next));
+        return;
+      }
 
-        return next;
-      });
+      setTabs(next);
     }
 
     window.addEventListener("technote:close-tab", handleCloseTab);
@@ -54,10 +54,18 @@ export function EditorTabStrip({
 
   useEffect(() => {
     if (!currentNote) {
+      closingActiveNoteIdRef.current = null;
       return;
     }
 
-    setTabs((current) => {
+    if (currentNote.id === closingActiveNoteIdRef.current) {
+      return;
+    }
+
+    closingActiveNoteIdRef.current = null;
+
+    setTabs(() => {
+      const current = loadOpenNoteTabs();
       const next = splitNote
         ? upsertOpenNoteTab(upsertOpenNoteTab(current, currentNote), splitNote)
         : upsertOpenNoteTab(current, currentNote);
@@ -74,11 +82,16 @@ export function EditorTabStrip({
         return;
       }
 
-      setTabs((current) => {
-        const next = current.map((tab) => (tab.noteId === detail.noteId ? { ...tab, dirty: detail.dirty } : tab));
-        saveOpenNoteTabs(next);
-        return next;
-      });
+      const current = loadOpenNoteTabs();
+
+      if (!current.some((tab) => tab.noteId === detail.noteId)) {
+        setTabs(current);
+        return;
+      }
+
+      const next = current.map((tab) => (tab.noteId === detail.noteId ? { ...tab, dirty: detail.dirty } : tab));
+      saveOpenNoteTabs(next);
+      setTabs(next);
     }
 
     window.addEventListener("technote:note-dirty", handleDirty);
@@ -131,9 +144,20 @@ export function EditorTabStrip({
                   className="absolute right-1 top-1 hidden h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:text-foreground group-hover:flex"
                   aria-label={`Close ${tab.title}`}
                   title="Close tab"
-                  onClick={() => {
+                  onClick={(event) => {
+                    const beforeCloseEvent = new CustomEvent("technote:before-close-tab", {
+                      cancelable: true,
+                      detail: { noteId: tab.noteId }
+                    });
+
+                    if (!window.dispatchEvent(beforeCloseEvent)) {
+                      event.preventDefault();
+                      return;
+                    }
+
                     const next = tabs.filter((candidate) => candidate.noteId !== tab.noteId);
                     saveOpenNoteTabs(next);
+                    closingActiveNoteIdRef.current = tab.noteId;
                   }}
                 >
                   <X size={14} />

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { emptyEditorDocument } from "@/modules/editor/editor-documents";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { getAuthedFoundation } from "@/modules/notes/note.actions";
+import { hardDeleteTrashedFoldersByIds, hardDeleteTrashedNotesByIds } from "@/modules/notes/note-lifecycle.service";
 import {
   assignParentFolderSchema,
   assignFolderSchema,
@@ -272,34 +273,16 @@ export async function toggleTagOnNoteAction(formData: FormData) {
   revalidatePath(`/notes/${parsed.noteId}`);
 }
 
-export async function pinFolderNotesAction(formData: FormData) {
+export async function togglePinFolderAction(formData: FormData) {
   const folderId = folderIdSchema.parse(formData.get("folderId"));
-  const { supabase, user, workspaceId } = await getAuthedFoundation();
-  const noteIds = await getRecursiveNoteIdsForFolder(supabase, user.id, workspaceId, folderId);
-  await updateNotesByIds(supabase, user.id, noteIds, { is_pinned: true });
-  revalidatePath("/");
-}
-
-export async function archiveFolderNotesAction(formData: FormData) {
-  const folderId = folderIdSchema.parse(formData.get("folderId"));
-  const { supabase, user, workspaceId } = await getAuthedFoundation();
-  const noteIds = await getRecursiveNoteIdsForFolder(supabase, user.id, workspaceId, folderId);
-  await updateNotesByIds(supabase, user.id, noteIds, { is_archived: true });
-  revalidatePath("/");
-}
-
-export async function deleteFolderAction(formData: FormData) {
-  const folderId = folderIdSchema.parse(formData.get("folderId"));
-  const { supabase, user, workspaceId } = await getAuthedFoundation();
-  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
-  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
-  await updateNotesByIds(supabase, user.id, noteIds, { deleted_at: new Date().toISOString() });
+  const isPinned = formData.get("isPinned") === "true";
+  const { supabase, user } = await getAuthedFoundation();
 
   const { error } = await supabase
     .from("folders")
-    .delete()
-    .eq("owner_id", user.id)
-    .in("id", [...folderIds].reverse());
+    .update({ is_pinned: !isPinned })
+    .eq("id", folderId)
+    .eq("owner_id", user.id);
 
   if (error) {
     throw error;
@@ -308,14 +291,72 @@ export async function deleteFolderAction(formData: FormData) {
   revalidatePath("/");
 }
 
-async function getRecursiveNoteIdsForFolder(
-  supabase: Awaited<ReturnType<typeof getAuthedFoundation>>["supabase"],
-  ownerId: string,
-  workspaceId: string,
-  folderId: string
-) {
-  const folderIds = await getDescendantFolderIds(supabase, ownerId, workspaceId, folderId);
-  return getNoteIdsForFolders(supabase, ownerId, folderIds);
+export async function archiveFolderNotesAction(formData: FormData) {
+  const folderId = folderIdSchema.parse(formData.get("folderId"));
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
+  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
+  await updateFoldersByIds(supabase, user.id, folderIds, { is_archived: true, deleted_at: null, is_pinned: false });
+  await updateNotesByIds(supabase, user.id, noteIds, { is_archived: true, deleted_at: null, is_pinned: false });
+  revalidatePath("/");
+  revalidatePath("/archive");
+}
+
+export async function deleteFolderAction(formData: FormData) {
+  const folderId = folderIdSchema.parse(formData.get("folderId"));
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
+  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
+  const deletedAt = new Date().toISOString();
+  await updateFoldersByIds(supabase, user.id, folderIds, {
+    deleted_at: deletedAt,
+    is_archived: false,
+    is_pinned: false
+  });
+  await updateNotesByIds(supabase, user.id, noteIds, {
+    deleted_at: deletedAt,
+    is_archived: false,
+    is_pinned: false
+  });
+
+  revalidatePath("/");
+  revalidatePath("/archive");
+  revalidatePath("/trash");
+}
+
+export async function restoreArchivedFolderAction(formData: FormData) {
+  const folderId = folderIdSchema.parse(formData.get("folderId"));
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
+  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
+  await updateFoldersByIds(supabase, user.id, folderIds, { is_archived: false });
+  await updateNotesByIds(supabase, user.id, noteIds, { is_archived: false });
+
+  revalidatePath("/");
+  revalidatePath("/archive");
+}
+
+export async function restoreTrashedFolderAction(formData: FormData) {
+  const folderId = folderIdSchema.parse(formData.get("folderId"));
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
+  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
+  await updateFoldersByIds(supabase, user.id, folderIds, { deleted_at: null, is_archived: false });
+  await updateNotesByIds(supabase, user.id, noteIds, { deleted_at: null, is_archived: false });
+
+  revalidatePath("/");
+  revalidatePath("/trash");
+}
+
+export async function deleteFolderForeverAction(formData: FormData) {
+  const folderId = folderIdSchema.parse(formData.get("folderId"));
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  const folderIds = await getDescendantFolderIds(supabase, user.id, workspaceId, folderId);
+  const noteIds = await getNoteIdsForFolders(supabase, user.id, folderIds);
+  await hardDeleteTrashedNotesByIds(supabase, noteIds, user.id);
+  await hardDeleteTrashedFoldersByIds(supabase, [...folderIds].reverse(), user.id);
+
+  revalidatePath("/trash");
 }
 
 async function getDescendantFolderIds(
@@ -393,6 +434,27 @@ async function updateNotesByIds(
     .update(values)
     .eq("owner_id", ownerId)
     .in("id", noteIds);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function updateFoldersByIds(
+  supabase: Awaited<ReturnType<typeof getAuthedFoundation>>["supabase"],
+  ownerId: string,
+  folderIds: string[],
+  values: Record<string, unknown>
+) {
+  if (folderIds.length === 0) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("folders")
+    .update(values)
+    .eq("owner_id", ownerId)
+    .in("id", folderIds);
 
   if (error) {
     throw error;

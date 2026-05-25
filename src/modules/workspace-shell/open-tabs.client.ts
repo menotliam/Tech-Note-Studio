@@ -5,16 +5,27 @@ export const openTabsStorageKey = "tech-note-studio.open-tabs";
 export function upsertOpenNoteTab(current: OpenNoteTab[], note: CurrentNoteForChrome): OpenNoteTab[] {
   const now = new Date().toISOString();
   const existing = current.find((tab) => tab.noteId === note.id);
-  const withoutCurrent = current.filter((tab) => tab.noteId !== note.id);
+
+  if (existing) {
+    return current.map((tab) =>
+      tab.noteId === note.id
+        ? {
+            ...tab,
+            title: note.title,
+            lastOpenedAt: now
+          }
+        : tab
+    );
+  }
 
   return [
     {
       noteId: note.id,
       title: note.title,
-      dirty: existing?.dirty ?? false,
+      dirty: false,
       lastOpenedAt: now
     },
-    ...withoutCurrent
+    ...current
   ];
 }
 

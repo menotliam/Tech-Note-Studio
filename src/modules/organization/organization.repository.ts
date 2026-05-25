@@ -5,7 +5,12 @@ type FolderRow = {
   id: string;
   name: string;
   parent_id: string | null;
+  is_pinned: boolean;
+  is_archived: boolean;
+  deleted_at: string | null;
 };
+
+const FOLDER_SELECT = "id, name, parent_id, is_pinned, is_archived, deleted_at";
 
 type TagRow = {
   id: string;
@@ -20,9 +25,11 @@ export async function listFolders(
 ): Promise<FolderSummary[]> {
   const { data, error } = await supabase
     .from("folders")
-    .select("id, name, parent_id")
+    .select(FOLDER_SELECT)
     .eq("owner_id", ownerId)
     .eq("workspace_id", workspaceId)
+    .is("deleted_at", null)
+    .eq("is_archived", false)
     .order("name", { ascending: true });
 
   if (error) {
@@ -32,7 +39,61 @@ export async function listFolders(
   return (data as FolderRow[]).map((folder) => ({
     id: folder.id,
     name: folder.name,
-    parentId: folder.parent_id
+    parentId: folder.parent_id,
+    isPinned: folder.is_pinned,
+    isArchived: folder.is_archived,
+    deletedAt: folder.deleted_at
+  }));
+}
+
+export async function listArchivedFolders(
+  supabase: SupabaseClient,
+  ownerId: string,
+  workspaceId: string
+): Promise<FolderSummary[]> {
+  return listFoldersByLifecycle(supabase, ownerId, workspaceId, "archive");
+}
+
+export async function listTrashedFolders(
+  supabase: SupabaseClient,
+  ownerId: string,
+  workspaceId: string
+): Promise<FolderSummary[]> {
+  return listFoldersByLifecycle(supabase, ownerId, workspaceId, "trash");
+}
+
+async function listFoldersByLifecycle(
+  supabase: SupabaseClient,
+  ownerId: string,
+  workspaceId: string,
+  lifecycle: "archive" | "trash"
+): Promise<FolderSummary[]> {
+  let query = supabase
+    .from("folders")
+    .select(FOLDER_SELECT)
+    .eq("owner_id", ownerId)
+    .eq("workspace_id", workspaceId)
+    .order("name", { ascending: true });
+
+  if (lifecycle === "archive") {
+    query = query.is("deleted_at", null).eq("is_archived", true);
+  } else {
+    query = query.not("deleted_at", "is", null);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return (data as FolderRow[]).map((folder) => ({
+    id: folder.id,
+    name: folder.name,
+    parentId: folder.parent_id,
+    isPinned: folder.is_pinned,
+    isArchived: folder.is_archived,
+    deletedAt: folder.deleted_at
   }));
 }
 

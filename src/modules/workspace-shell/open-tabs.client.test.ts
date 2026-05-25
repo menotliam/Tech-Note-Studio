@@ -57,18 +57,34 @@ describe("open note tabs storage", () => {
     expect(loadOpenNoteTabs()).toEqual([secondTab]);
   });
 
-  it("upserts the current note at the front while preserving dirty state", () => {
-    const [updatedTab] = upsertOpenNoteTab([firstTab], {
-      id: "note-1",
-      title: "First renamed",
+  it("updates an existing tab in place while preserving dirty state", () => {
+    const [firstResult, updatedTab] = upsertOpenNoteTab([firstTab, secondTab], {
+      id: "note-2",
+      title: "Second renamed",
       contentJson: { type: "doc", schemaVersion: 1, content: [] }
     });
 
+    expect(firstResult).toBe(firstTab);
     expect(updatedTab).toMatchObject({
-      noteId: "note-1",
-      title: "First renamed",
+      noteId: "note-2",
+      title: "Second renamed",
+      dirty: true
+    });
+  });
+
+  it("adds a new tab to the front", () => {
+    const [newTab, existingTab] = upsertOpenNoteTab([firstTab], {
+      id: "note-3",
+      title: "Third",
+      contentJson: { type: "doc", schemaVersion: 1, content: [] }
+    });
+
+    expect(newTab).toMatchObject({
+      noteId: "note-3",
+      title: "Third",
       dirty: false
     });
+    expect(existingTab).toBe(firstTab);
   });
 
   it("resolves the next close target", () => {

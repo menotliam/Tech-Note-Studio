@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { EditorContent, type JSONContent, useEditor } from "@tiptap/react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { EditorContent, type Editor, type JSONContent, useEditor } from "@tiptap/react";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Selection } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import TiptapImage from "@tiptap/extension-image";
@@ -34,9 +36,12 @@ import { getPasteDetectionAction } from "@/modules/editor/editor-paste-detection
 import { TechnicalCodeBlock } from "@/modules/editor/extensions/TechnicalCodeBlock";
 import type { EditorDocument } from "@/modules/editor/editor.types";
 import type { DetectionResult } from "@/modules/detection/detection.types";
+import { updateNoteAction } from "@/modules/notes/note.actions";
 import {
   createUpdateNoteOperation,
+  discardCachedNoteUpdate,
   enqueueSyncOperation,
+  getCachedNote,
   putCachedNote
 } from "@/modules/offline-sync/indexeddb.client";
 import type { EditorPreferences } from "@/modules/preferences/preferences.types";
@@ -65,9 +70,10 @@ export function RichNoteEditor({
   const [contentJson, setContentJson] = useState(() => serializeContent(tiptapContent));
   const [contentText, setContentText] = useState(() => extractPlainTextFromEditorJson(initialContent));
   const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(preferences.autoDetectionEnabled);
-  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [pendingCloseNoteId, setPendingCloseNoteId] = useState<string | null>(null);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
+  const dirtyRef = useRef(false);
   const cacheTimerRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const [pasteSuggestion, setPasteSuggestion] = useState<{
@@ -84,12 +90,70 @@ export function RichNoteEditor({
   }, [autoDetectionEnabled]);
 
   useEffect(() => {
+    dirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
     return () => {
       if (cacheTimerRef.current) {
         window.clearTimeout(cacheTimerRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (!dirtyRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
+  useEffect(() => {
+    function handleBeforeCloseTab(event: Event) {
+      const detail = (event as CustomEvent<{ noteId?: string }>).detail;
+
+      if (!dirtyRef.current || detail?.noteId !== noteId) {
+        return;
+      }
+
+      event.preventDefault();
+      setPendingCloseNoteId(noteId);
+    }
+
+    window.addEventListener("technote:before-close-tab", handleBeforeCloseTab);
+    return () => window.removeEventListener("technote:before-close-tab", handleBeforeCloseTab);
+  }, [noteId]);
+
+  useEffect(() => {
+    const form = document.getElementById(`note-editor-form-${noteId}`);
+
+    function handleSubmit() {
+      markNoteDirty(noteId, false);
+    }
+
+    form?.addEventListener("submit", handleSubmit);
+    return () => form?.removeEventListener("submit", handleSubmit);
+  }, [noteId]);
+
+  useEffect(() => {
+    function handleDirty(event: Event) {
+      const detail = (event as CustomEvent<{ noteId: string; dirty: boolean }>).detail;
+
+      if (detail?.noteId === noteId) {
+        setIsDirty(detail.dirty);
+      }
+    }
+
+    window.addEventListener("technote:note-dirty", handleDirty);
+    return () => window.removeEventListener("technote:note-dirty", handleDirty);
+  }, [noteId]);
 
   useEffect(() => {
     function handleOutlineJump(event: Event) {
@@ -148,6 +212,30 @@ export function RichNoteEditor({
           getEditorTypographyClass(preferences)
       },
       handlePaste(view, event) {
+        const pastedImages = getClipboardDataImageFiles(event);
+
+        if (pastedImages.length > 0) {
+          if (!preferences.clipboardImagePasteEnabled) {
+            return false;
+          }
+
+          event.preventDefault();
+
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            return true;
+          }
+
+          void resolveClipboardImageFiles(pastedImages).then((files) =>
+            uploadImagesSequentially({
+              files,
+              noteId,
+              view,
+              insertAtSelection: true
+            })
+          );
+          return true;
+        }
+
         const pastedText = event.clipboardData?.getData("text/plain") ?? "";
 
         if (!pastedText.trim()) {
@@ -187,27 +275,25 @@ export function RichNoteEditor({
       }
     },
     onCreate({ editor: createdEditor }) {
-      const document = toEditorDocument(createdEditor.getJSON());
-      const text = createdEditor.getText({ blockSeparator: "\n" });
-      setContentJson(JSON.stringify(document));
-      setContentText(text);
-      cacheEditorContent({
+      void hydrateEditorFromCache({
+        editor: createdEditor,
         noteId,
         workspaceId,
         title,
         updatedAt,
-        contentJson: document,
-        contentText: text,
-        enqueueForSync: false
+        onContentLoaded: (document, text, dirty) => {
+          setContentJson(JSON.stringify(document));
+          setContentText(text);
+          markNoteDirty(noteId, dirty);
+        }
       });
-      dispatchNoteDirtyEvent(noteId, false);
     },
     onUpdate({ editor: updatedEditor }) {
       const document = toEditorDocument(updatedEditor.getJSON());
       const text = updatedEditor.getText({ blockSeparator: "\n" });
       setContentJson(JSON.stringify(document));
       setContentText(text);
-      dispatchNoteDirtyEvent(noteId, true);
+      markNoteDirty(noteId, true);
 
       if (cacheTimerRef.current) {
         window.clearTimeout(cacheTimerRef.current);
@@ -221,14 +307,97 @@ export function RichNoteEditor({
           updatedAt,
           contentJson: document,
           contentText: text,
-          enqueueForSync: true
+          localPending: true,
+          enqueueForSync: isOffline()
         });
       }, 500);
     }
   });
 
+  function handleDroppedImages(event: DragEvent<HTMLDivElement>) {
+    const droppedImages = getDataTransferImageFiles(event.dataTransfer);
+
+    if (!editor || droppedImages.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    editor.commands.focus();
+
+    void uploadImagesSequentially({
+      files: droppedImages,
+      noteId,
+      view: editor.view,
+      insertAtSelection: true
+    });
+  }
+
+  async function saveCurrentNote() {
+    if (cacheTimerRef.current) {
+      window.clearTimeout(cacheTimerRef.current);
+      cacheTimerRef.current = null;
+    }
+
+    const formData = new FormData();
+    const currentTitle =
+      document.querySelector<HTMLInputElement>(`input[name="title"][data-note-id="${noteId}"]`)?.value ?? title;
+    const currentDocument = editor ? toEditorDocument(editor.getJSON()) : (JSON.parse(contentJson) as EditorDocument);
+    const currentText = editor?.getText({ blockSeparator: "\n" }) ?? contentText;
+
+    formData.set("noteId", noteId);
+    formData.set("title", currentTitle);
+    formData.set("contentJson", JSON.stringify(currentDocument));
+    formData.set("contentText", currentText);
+
+    await updateNoteAction(formData);
+    await discardCachedNoteUpdate(noteId);
+    markNoteDirty(noteId, false);
+  }
+
+  async function continueWithoutSaving() {
+    if (!pendingCloseNoteId) {
+      return;
+    }
+
+    const noteIdToClose = pendingCloseNoteId;
+    if (cacheTimerRef.current) {
+      window.clearTimeout(cacheTimerRef.current);
+      cacheTimerRef.current = null;
+    }
+
+    await discardCachedNoteUpdate(noteIdToClose);
+    markNoteDirty(noteId, false);
+    setPendingCloseNoteId(null);
+    window.dispatchEvent(new CustomEvent("technote:close-tab", { detail: { noteId: noteIdToClose } }));
+  }
+
+  async function saveAndContinue() {
+    if (!pendingCloseNoteId) {
+      return;
+    }
+
+    const noteIdToClose = pendingCloseNoteId;
+    await saveCurrentNote();
+    setPendingCloseNoteId(null);
+    window.dispatchEvent(new CustomEvent("technote:close-tab", { detail: { noteId: noteIdToClose } }));
+  }
+
   return (
-    <div ref={containerRef} className="relative space-y-3" data-code-theme={preferences.codeTheme}>
+    <div
+      ref={containerRef}
+      className="relative space-y-3"
+      data-code-theme={preferences.codeTheme}
+      onDragOver={(event) => {
+        const hasDraggedImage = Array.from(event.dataTransfer.items).some(
+          (item) => item.kind === "file" && ["image/png", "image/jpeg", "image/webp"].includes(item.type)
+        );
+
+        if (hasDraggedImage) {
+          event.preventDefault();
+        }
+      }}
+      onDrop={handleDroppedImages}
+    >
       <input type="hidden" name="contentJson" value={contentJson} />
       <input type="hidden" name="contentText" value={contentText} />
 
@@ -301,31 +470,22 @@ export function RichNoteEditor({
         ref={imageInputRef}
         type="file"
         accept="image/png,image/jpeg,image/webp"
+        multiple
         className="sr-only"
         onChange={(event) => {
-          const file = event.target.files?.[0];
+          const files = getImageFiles(Array.from(event.target.files ?? []));
           event.target.value = "";
 
-          if (file) {
-            void uploadImageBlock({
-              file,
+          if (editor && files.length > 0) {
+            void uploadImagesSequentially({
+              files,
               noteId,
-              onStart: () => {
-                setImageUploadError(null);
-                setIsUploadingImage(true);
-              },
-              onError: setImageUploadError,
-              onFinish: () => setIsUploadingImage(false),
-              onUploaded: ({ src, alt }) => editor?.chain().focus().setImage({ src, alt }).run()
+              view: editor.view,
+              insertAtSelection: false
             });
           }
         }}
       />
-      {isUploadingImage || imageUploadError ? (
-        <p className={imageUploadError ? "text-sm text-red-700" : "text-sm text-muted-foreground"}>
-          {imageUploadError ?? "Uploading image..."}
-        </p>
-      ) : null}
 
       {pasteSuggestion ? (
         <div
@@ -388,11 +548,46 @@ export function RichNoteEditor({
       ) : null}
 
       <EditorContent editor={editor} />
+      {pendingCloseNoteId ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-sm rounded-md border border-border bg-panel-strong p-4 shadow-2xl">
+            <h2 className="text-base font-semibold">Unsaved changes</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This note has unsaved changes. Save before leaving?
+            </p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
+                onClick={() => setPendingCloseNoteId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={continueWithoutSaving}
+              >
+                Don't Save
+              </button>
+              <button
+                type="button"
+                className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+                onClick={() => {
+                  void saveAndContinue();
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function dispatchNoteDirtyEvent(noteId: string, dirty: boolean) {
+function markNoteDirty(noteId: string, dirty: boolean) {
   if (typeof window === "undefined") {
     return;
   }
@@ -518,23 +713,31 @@ function getDetectionLabel(result: DetectionResult) {
   return result.detectedType === "code" ? "code" : result.detectedType;
 }
 
-async function uploadImageBlock({
-  file,
+async function uploadImagesSequentially({
+  files,
   noteId,
-  onStart,
-  onError,
-  onFinish,
-  onUploaded
+  view,
+  insertAtSelection
 }: {
-  file: File;
+  files: File[];
   noteId: string;
-  onStart: () => void;
-  onError: (message: string) => void;
-  onFinish: () => void;
-  onUploaded: (image: { src: string; alt: string }) => void;
+  view: EditorView;
+  insertAtSelection: boolean;
 }) {
-  onStart();
+  for (const file of files) {
+    const result = await uploadImageFile(file, noteId);
 
+    if (result.src) {
+      insertImageIntoEditor(view, {
+        src: result.src,
+        alt: result.alt ?? file.name,
+        insertAtSelection
+      });
+    }
+  }
+}
+
+async function uploadImageFile(file: File, noteId: string) {
   try {
     const formData = new FormData();
     formData.set("noteId", noteId);
@@ -543,19 +746,153 @@ async function uploadImageBlock({
       method: "POST",
       body: formData
     });
-    const payload = (await response.json()) as { src?: string; alt?: string; error?: string };
+    const payload = (await response.json()) as { src?: string; alt?: string };
 
     if (!response.ok || !payload.src) {
-      onError(payload.error ?? "Image upload failed.");
-      return;
+      return {};
     }
 
-    onUploaded({ src: payload.src, alt: payload.alt ?? file.name });
+    return { src: payload.src, alt: payload.alt ?? file.name };
   } catch {
-    onError("Image upload failed.");
-  } finally {
-    onFinish();
+    return {};
   }
+}
+
+function insertImageIntoEditor(
+  view: EditorView,
+  image: { src: string; alt: string; insertAtSelection: boolean }
+) {
+  const { state, dispatch } = view;
+  const imageNode = state.schema.nodes.image?.create({
+    src: image.src,
+    alt: image.alt,
+    title: "Add caption..."
+  });
+
+  if (!imageNode) {
+    return;
+  }
+
+  const { $from } = state.selection;
+  const parent = $from.parent;
+  const insertAfterCurrentBlock = $from.depth > 0 && (parent.type.name === "codeBlock" || parent.textContent.trim().length > 0);
+  const rawPosition = image.insertAtSelection && insertAfterCurrentBlock ? $from.after($from.depth) : state.selection.to;
+  const position = Math.max(0, Math.min(rawPosition, state.doc.content.size));
+
+  try {
+    dispatchImageInsertion(view, imageNode, position);
+  } catch {
+    try {
+      dispatchImageInsertion(view, imageNode, view.state.doc.content.size);
+    } catch {
+      // Keep one failed insert from aborting the rest of a multi-image upload.
+    }
+  }
+}
+
+function dispatchImageInsertion(view: EditorView, imageNode: ProseMirrorNode, position: number) {
+  const { state, dispatch } = view;
+  const safePosition = Math.max(0, Math.min(position, state.doc.content.size));
+  const tr = state.tr.insert(safePosition, imageNode);
+  const nextPosition = Math.min(safePosition + imageNode.nodeSize, tr.doc.content.size);
+
+  dispatch(tr.setSelection(Selection.near(tr.doc.resolve(nextPosition))).scrollIntoView());
+}
+
+function getClipboardDataImageFiles(event: ClipboardEvent) {
+  const itemFiles = Array.from(event.clipboardData?.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+
+  return getImageFiles(itemFiles.length > 0 ? itemFiles : Array.from(event.clipboardData?.files ?? []));
+}
+
+async function resolveClipboardImageFiles(fallbackFiles: File[]) {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.read) {
+    return fallbackFiles;
+  }
+
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    const clipboardFiles = (
+      await Promise.all(
+        clipboardItems.flatMap((item) =>
+          item.types
+            .filter((type) => ["image/png", "image/jpeg", "image/webp"].includes(type))
+            .map(async (type) => {
+              const blob = await item.getType(type);
+              const extension = type.split("/")[1] ?? "png";
+              return new File([blob], `clipboard-image.${extension}`, { type });
+            })
+        )
+      )
+    ).filter((file): file is File => Boolean(file));
+
+    return clipboardFiles.length > fallbackFiles.length ? clipboardFiles : fallbackFiles;
+  } catch {
+    return fallbackFiles;
+  }
+}
+
+function getDataTransferImageFiles(dataTransfer: DataTransfer) {
+  const itemFiles = Array.from(dataTransfer.items)
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
+
+  return getImageFiles(itemFiles.length > 0 ? itemFiles : Array.from(dataTransfer.files));
+}
+
+function getImageFiles(files: File[]) {
+  return files.filter((file) => ["image/png", "image/jpeg", "image/webp"].includes(file.type));
+}
+
+function isOffline() {
+  return typeof navigator !== "undefined" && !navigator.onLine;
+}
+
+async function hydrateEditorFromCache({
+  editor,
+  noteId,
+  workspaceId,
+  title,
+  updatedAt,
+  onContentLoaded
+}: {
+  editor: Editor;
+  noteId: string;
+  workspaceId: string;
+  title: string;
+  updatedAt: string;
+  onContentLoaded: (document: EditorDocument, text: string, dirty: boolean) => void;
+}) {
+  const cachedNote = await getCachedNote(noteId);
+
+  if (cachedNote?.syncStatus === "local_pending") {
+    const document = cachedNote.contentJson ?? toEditorDocument(editor.getJSON());
+
+    if (cachedNote.contentJson) {
+      editor.commands.setContent(toTiptapContent(cachedNote.contentJson), false);
+    }
+
+    onContentLoaded(document, cachedNote.contentText, true);
+    return;
+  }
+
+  const document = toEditorDocument(editor.getJSON());
+  const text = editor.getText({ blockSeparator: "\n" });
+  onContentLoaded(document, text, false);
+  cacheEditorContent({
+    noteId,
+    workspaceId,
+    title,
+    updatedAt,
+    contentJson: document,
+    contentText: text,
+    localPending: false,
+    enqueueForSync: false
+  });
 }
 
 function cacheEditorContent({
@@ -565,6 +902,7 @@ function cacheEditorContent({
   updatedAt,
   contentJson,
   contentText,
+  localPending,
   enqueueForSync
 }: {
   noteId: string;
@@ -573,6 +911,7 @@ function cacheEditorContent({
   updatedAt: string;
   contentJson: EditorDocument;
   contentText: string;
+  localPending: boolean;
   enqueueForSync: boolean;
 }) {
   const currentTitle =
@@ -585,7 +924,7 @@ function cacheEditorContent({
     contentText,
     updatedAt,
     localUpdatedAt: new Date().toISOString(),
-    syncStatus: enqueueForSync ? "local_pending" : "synced"
+    syncStatus: localPending ? "local_pending" : "synced"
   } as const;
 
   void putCachedNote(note)

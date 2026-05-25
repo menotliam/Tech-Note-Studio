@@ -28,7 +28,8 @@ export function DashboardShell({
   splitNote,
   searchQuery = "",
   activeFolderId,
-  activeTagId
+  activeTagId,
+  workspaceView = "active"
 }: {
   userEmail: string;
   notes: NoteSummary[];
@@ -42,6 +43,7 @@ export function DashboardShell({
   searchQuery?: string;
   activeFolderId?: string;
   activeTagId?: string;
+  workspaceView?: "active" | "archive" | "trash";
 }) {
   const currentNoteForChrome = selectedNote
     ? { id: selectedNote.id, title: selectedNote.title, contentJson: selectedNote.contentJson }
@@ -59,7 +61,7 @@ export function DashboardShell({
       style={getPreferenceStyle(preferences)}
     >
       <PreferenceThemeApplier preferences={preferences} />
-      <RecentNotesCache notes={notes} />
+      {workspaceView === "active" ? <RecentNotesCache notes={notes} /> : null}
       <SyncQueueProcessor />
       <div
         data-ide-shell="true"
@@ -84,6 +86,7 @@ export function DashboardShell({
           activeFolderId={activeFolderId}
           activeTagId={activeTagId}
           workspace={workspace}
+          workspaceView={workspaceView}
         />
 
         <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background" data-editor-workbench>
@@ -109,9 +112,9 @@ export function DashboardShell({
                     note={splitNote}
                     folders={folders}
                     tags={tags}
-                      preferences={preferences}
-                      workspace={workspace}
-                      outlineItems={splitOutlineItems}
+                    preferences={preferences}
+                    workspace={workspace}
+                    outlineItems={splitOutlineItems}
                     splitPane
                   />
                 </div>
@@ -121,16 +124,18 @@ export function DashboardShell({
             <div className="flex min-h-0 flex-1 items-center justify-center px-8">
               <div className="max-w-md text-center">
                 <div className="mx-auto mb-5 h-12 w-12 rounded-md border border-border bg-[image:var(--accent-gradient)]" />
-                <h2 className="text-2xl font-semibold">Select or create a note</h2>
-                <form action={createBlankNoteAction} className="mt-6">
-                  <button
-                    className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
-                    aria-label="Create note"
-                  >
-                    <FilePlus2 size={17} />
-                    New Note
-                  </button>
-                </form>
+                <h2 className="text-2xl font-semibold">{getEmptyEditorTitle(workspaceView)}</h2>
+                {workspaceView === "active" ? (
+                  <form action={createBlankNoteAction} className="mt-6">
+                    <button
+                      className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
+                      aria-label="Create note"
+                    >
+                      <FilePlus2 size={17} />
+                      New Note
+                    </button>
+                  </form>
+                ) : null}
               </div>
             </div>
           )}
@@ -138,4 +143,16 @@ export function DashboardShell({
       </div>
     </main>
   );
+}
+
+function getEmptyEditorTitle(workspaceView: "active" | "archive" | "trash") {
+  if (workspaceView === "archive") {
+    return "Archive";
+  }
+
+  if (workspaceView === "trash") {
+    return "Trash";
+  }
+
+  return "Select or create a note";
 }

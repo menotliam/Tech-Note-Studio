@@ -12,8 +12,12 @@ type NoteRow = {
   schema_version: number;
   is_pinned: boolean;
   is_archived: boolean;
+  deleted_at: string | null;
   updated_at: string;
 };
+
+const NOTE_SELECT =
+  "id, workspace_id, title, content_json, content_text, schema_version, is_pinned, is_archived, deleted_at, updated_at";
 
 function toNoteSummary(row: NoteRow): NoteSummary {
   return {
@@ -22,6 +26,7 @@ function toNoteSummary(row: NoteRow): NoteSummary {
     contentText: row.content_text ?? "",
     isPinned: row.is_pinned,
     isArchived: row.is_archived,
+    deletedAt: row.deleted_at,
     updatedAt: row.updated_at,
     folderId: null,
     tagIds: []
@@ -48,7 +53,7 @@ export async function listNotes(
 ): Promise<NoteSummary[]> {
   let query = supabase
     .from("notes")
-    .select("id, workspace_id, title, content_json, content_text, schema_version, is_pinned, is_archived, updated_at")
+    .select(NOTE_SELECT)
     .eq("owner_id", ownerId)
     .is("deleted_at", null)
     .eq("is_archived", false)
@@ -99,6 +104,43 @@ export async function listNotes(
   }
 
   return notes;
+}
+
+export async function listArchivedNotes(
+  supabase: SupabaseClient,
+  ownerId: string
+): Promise<NoteSummary[]> {
+  const { data, error } = await supabase
+    .from("notes")
+    .select(NOTE_SELECT)
+    .eq("owner_id", ownerId)
+    .is("deleted_at", null)
+    .eq("is_archived", true)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return attachNoteOrganization(supabase, ownerId, (data as NoteRow[]).map(toNoteSummary));
+}
+
+export async function listTrashedNotes(
+  supabase: SupabaseClient,
+  ownerId: string
+): Promise<NoteSummary[]> {
+  const { data, error } = await supabase
+    .from("notes")
+    .select(NOTE_SELECT)
+    .eq("owner_id", ownerId)
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return attachNoteOrganization(supabase, ownerId, (data as NoteRow[]).map(toNoteSummary));
 }
 
 async function attachNoteOrganization(
@@ -157,7 +199,7 @@ export async function getNoteById(
 ): Promise<NoteDetail | null> {
   const { data, error } = await supabase
     .from("notes")
-    .select("id, workspace_id, title, content_json, content_text, schema_version, is_pinned, is_archived, updated_at")
+    .select(NOTE_SELECT)
     .eq("owner_id", ownerId)
     .is("deleted_at", null)
     .eq("id", noteId)
