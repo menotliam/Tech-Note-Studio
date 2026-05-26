@@ -75,4 +75,43 @@ describe("editorDocumentToExportDocument", () => {
       { type: "paragraph", text: "After" }
     ]);
   });
+
+  it("preserves image export metadata used by PDF and DOCX embedding", () => {
+    const document: EditorDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [
+        {
+          type: "paragraph",
+          attrs: { textAlign: "right" },
+          content: [
+            {
+              type: "image",
+              attrs: {
+                src: "https://example.com/storage/v1/object/public/note-files/user/workspace/note/image.png",
+                alt: "Architecture diagram",
+                caption: "Deployment architecture",
+                width: 360,
+                fileId: "550e8400-e29b-41d4-a716-446655440000"
+              }
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = editorDocumentToExportDocument("Image metadata", document);
+
+    expect(result.blocks).toEqual([
+      {
+        type: "image",
+        src: "https://example.com/storage/v1/object/public/note-files/user/workspace/note/image.png",
+        alt: "Architecture diagram",
+        caption: "Deployment architecture",
+        width: 360,
+        alignment: "right",
+        fileId: "550e8400-e29b-41d4-a716-446655440000"
+      }
+    ]);
+  });
 });

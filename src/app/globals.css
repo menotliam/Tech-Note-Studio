@@ -321,6 +321,7 @@ select {
 }
 
 [data-focus-mode="true"] [data-explorer-panel],
+[data-focus-mode="true"] [data-explorer-resize-handle],
 [data-focus-mode="true"] [data-outline-card] {
   display: none;
 }
@@ -334,6 +335,10 @@ select {
 }
 
 [data-ide-shell="true"][data-explorer-collapsed="true"] [data-explorer-panel] {
+  display: none;
+}
+
+[data-ide-shell="true"][data-explorer-collapsed="true"] [data-explorer-resize-handle] {
   display: none;
 }
 

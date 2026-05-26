@@ -49,9 +49,15 @@ function sanitizeNode(node: EditorNode | EditorTextNode, preserveText: boolean):
     };
   }
 
+  const attrs = sanitizeAttrs(node.type, getNodeAttrs(node));
+
+  if (node.type === "image" && !attrs) {
+    return null;
+  }
+
   return {
     type: node.type,
-    attrs: sanitizeAttrs(node.type, getNodeAttrs(node)),
+    attrs,
     content: sanitizeChildren(getNodeChildren(node), node.type === "codeBlock")
   };
 }

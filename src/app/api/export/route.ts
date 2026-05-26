@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { createSupabaseServiceRoleClient } from "@/lib/supabase/service-role";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
 import type { EditorDocument } from "@/modules/editor/editor.types";
+import { attachExportImageAssets, ExportImageLoadError } from "@/modules/export/export-image-loader";
 import { editorDocumentToExportDocument, exportDocumentsToBundle } from "@/modules/export/export.renderer";
 import { exportNotesSchema } from "@/modules/export/export.schemas";
 import { generateDocx, generateDocxBundle } from "@/modules/export/generators/docx.generator";
@@ -114,6 +116,15 @@ export async function GET(request: NextRequest) {
     const exportDocuments = exportNotes.map((note) =>
       editorDocumentToExportDocument(note.title, sanitizeEditorDocument(note.content_json))
     );
+    if (hasExportImages(exportDocuments)) {
+      await attachExportImageAssets({
+        ownerId: user.id,
+        notes: exportNotes,
+        documents: exportDocuments,
+        metadataClient: supabase,
+        storageClient: createSupabaseServiceRoleClient()
+      });
+    }
     const exportBundle = exportDocumentsToBundle(exportDocuments);
     const file =
       parsed.data.mode === "zip"
@@ -168,7 +179,7 @@ export async function GET(request: NextRequest) {
         .eq("owner_id", user.id);
     }
 
-    return NextResponse.json({ error: "Export failed." }, { status: 500 });
+    return NextResponse.json({ error: getSafeExportErrorMessage(error) }, { status: 500 });
   }
 }
 
@@ -233,6 +244,22 @@ async function generateExportZip(documents: ExportDocumentForDownload[], format:
   );
 
   return generateZip(entries);
+}
+
+function hasExportImages(documents: ExportDocumentForDownload[]) {
+  return documents.some((document) => document.blocks.some((block) => block.type === "image"));
+}
+
+function getSafeExportErrorMessage(error: unknown) {
+  if (error instanceof ExportImageLoadError) {
+    return error.message;
+  }
+
+  if (error instanceof Error && error.message.startsWith("Could not embed image in ")) {
+    return error.message;
+  }
+
+  return "Export failed.";
 }
 
 function createUniqueExportName(

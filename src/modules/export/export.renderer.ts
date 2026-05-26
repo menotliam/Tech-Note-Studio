@@ -49,13 +49,7 @@ function nodeToExportBlocks(node: EditorNode | EditorTextNode): ExportBlock[] {
         return [];
       }
 
-      return [
-        {
-          type: "image",
-          src: node.attrs.src,
-          alt: typeof node.attrs?.alt === "string" ? node.attrs.alt : "Image"
-        }
-      ];
+      return [createImageExportBlock(node)];
     case "bulletList":
     case "orderedList":
       return [
@@ -103,7 +97,7 @@ function paragraphToExportBlocks(node: EditorNode): ExportBlock[] {
       textBuffer = "";
     }
 
-    blocks.push(...nodeToExportBlocks(child));
+    blocks.push(createImageExportBlock(child, getTextAlignment(node.attrs?.textAlign)));
   });
 
   if (textBuffer.trim()) {
@@ -111,6 +105,36 @@ function paragraphToExportBlocks(node: EditorNode): ExportBlock[] {
   }
 
   return blocks;
+}
+
+function createImageExportBlock(
+  node: EditorNode,
+  parentAlignment?: Extract<ExportBlock, { type: "image" }>["alignment"]
+): Extract<ExportBlock, { type: "image" }> {
+  const block: Extract<ExportBlock, { type: "image" }> = {
+    type: "image",
+    src: String(node.attrs?.src),
+    alt: typeof node.attrs?.alt === "string" ? node.attrs.alt : "Image"
+  };
+  const alignment = getTextAlignment(node.attrs?.textAlign) ?? parentAlignment;
+
+  if (alignment) {
+    block.alignment = alignment;
+  }
+
+  if (typeof node.attrs?.caption === "string" && node.attrs.caption) {
+    block.caption = node.attrs.caption;
+  }
+
+  if (typeof node.attrs?.width === "number") {
+    block.width = node.attrs.width;
+  }
+
+  if (typeof node.attrs?.fileId === "string" && node.attrs.fileId) {
+    block.fileId = node.attrs.fileId;
+  }
+
+  return block;
 }
 
 function getNodeText(node: EditorNode | EditorTextNode): string {
@@ -137,4 +161,8 @@ function getNodeChildren(node: EditorDocument | EditorNode | EditorTextNode): Ar
 
 function normalizeHeadingLevel(level: unknown): 1 | 2 | 3 {
   return level === 1 || level === 2 || level === 3 ? level : 2;
+}
+
+function getTextAlignment(value: unknown): Extract<ExportBlock, { type: "image" }>["alignment"] | undefined {
+  return value === "left" || value === "center" || value === "right" ? value : undefined;
 }

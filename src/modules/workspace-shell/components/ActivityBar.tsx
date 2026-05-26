@@ -58,6 +58,7 @@ export function ActivityBar({
     setActiveActivity(activity);
     setWorkspaceAttribute("data-active-activity", activity);
     setWorkspaceAttribute("data-explorer-collapsed", "false");
+    window.dispatchEvent(new CustomEvent("technote:activity-change", { detail: { activity } }));
   }
 
   function updateFocusMode(nextFocusMode: boolean) {

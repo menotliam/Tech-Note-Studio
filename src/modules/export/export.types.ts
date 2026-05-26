@@ -10,6 +10,15 @@ export type ExportBundle = {
   documents: ExportDocument[];
 };
 
+export type ExportImageAsset = {
+  data: Buffer;
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  sizeBytes: number;
+  storageBucket: string;
+  storagePath: string;
+  originalFilename: string | null;
+};
+
 export type ExportBlock =
   | { type: "heading"; level: 1 | 2 | 3; text: string }
   | { type: "paragraph"; text: string }
@@ -18,5 +27,14 @@ export type ExportBlock =
   | { type: "quote"; text: string }
   | { type: "divider" }
   | { type: "code"; language: string; code: string }
-  | { type: "image"; src: string; alt: string }
+  | {
+      type: "image";
+      src: string;
+      alt: string;
+      caption?: string;
+      width?: number;
+      alignment?: "left" | "center" | "right";
+      fileId?: string;
+      asset?: ExportImageAsset;
+    }
   | { type: "table"; rows: string[][] };

@@ -69,4 +69,38 @@ describe("editor validation", () => {
     expect(paragraph.content?.[0]?.marks).toBeUndefined();
     expect(codeBlock.content?.[0]?.text).toBe("<script>alert(1)</script>");
   });
+
+  it("sanitizes unsafe image attrs used by export", () => {
+    const document = parseEditorDocumentJson(
+      JSON.stringify({
+        type: "doc",
+        content: [
+          {
+            type: "image",
+            attrs: {
+              src: "javascript:alert(1)",
+              caption: "Unsafe image"
+            }
+          },
+          {
+            type: "image",
+            attrs: {
+              src: "https://example.com/image.png",
+              width: 9999,
+              textAlign: "center",
+              fileId: "not-a-uuid"
+            }
+          }
+        ]
+      })
+    );
+
+    expect(document.content).toHaveLength(1);
+    const image = document.content?.[0] as EditorNode;
+
+    expect(image.attrs?.src).toBe("https://example.com/image.png");
+    expect(image.attrs?.width).toBe(1200);
+    expect(image.attrs?.textAlign).toBe("center");
+    expect(image.attrs?.fileId).toBeUndefined();
+  });
 });

@@ -13,6 +13,7 @@ import { NetworkStatusIndicator } from "@/modules/offline-sync/components/Networ
 import type { UserPreferences } from "@/modules/preferences/preferences.types";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
 import { OutlinePanel } from "@/modules/workspace-shell/components/OutlinePanel";
+import { EditorHeaderMenu } from "@/modules/workspace-shell/components/EditorHeaderMenu";
 import type { OutlineItem } from "@/modules/workspace-shell/workspace-shell.types";
 import { countApproximateEditorLines, getNoteTagNames } from "@/modules/workspace-shell/workspace-shell.utils";
 import { CloseNoteTabButton } from "./CloseNoteTabButton";
@@ -86,11 +87,15 @@ export function NoteEditorShell({
           >
             Save
           </button>
-          <details className="relative">
-            <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-2 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted">
+          <EditorHeaderMenu
+            ariaLabel="Download note"
+            summary={
+              <span className="inline-flex h-8 cursor-pointer list-none items-center gap-2 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted">
               <Download size={14} />
               Download
-            </summary>
+              </span>
+            }
+          >
             <div className="absolute right-0 z-[60] mt-1 w-36 rounded-md border border-border bg-panel-strong p-1 shadow-xl">
               <a className="block rounded-md px-2 py-1.5 text-sm hover:bg-muted" href={`/api/export?noteId=${note.id}&format=pdf`}>
                 PDF
@@ -99,11 +104,15 @@ export function NoteEditorShell({
                 DOCX
               </a>
             </div>
-          </details>
-          <details className="relative">
-            <summary className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-border hover:bg-muted">
+          </EditorHeaderMenu>
+          <EditorHeaderMenu
+            ariaLabel="Note actions"
+            summary={
+              <span className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-md border border-border hover:bg-muted">
               <MoreHorizontal size={16} />
-            </summary>
+              </span>
+            }
+          >
             <div className="absolute right-0 z-[60] mt-1 w-44 rounded-md border border-border bg-panel-strong p-1 shadow-xl">
               <CloseNoteTabButton noteId={note.id} />
               <span className="block cursor-not-allowed rounded-md px-2 py-1.5 text-sm text-muted-foreground opacity-60">
@@ -116,7 +125,7 @@ export function NoteEditorShell({
                 </button>
               </form>
             </div>
-          </details>
+          </EditorHeaderMenu>
         </div>
       </header>
 

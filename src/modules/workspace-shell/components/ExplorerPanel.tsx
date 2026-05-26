@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import type { DragEvent as ReactDragEvent, MouseEvent, ReactNode } from "react";
-import { useMemo, useState, useTransition } from "react";
+import type { DragEvent as ReactDragEvent, MouseEvent, ReactNode, RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Archive,
   ChevronDown,
@@ -17,7 +17,8 @@ import {
   Search,
   Tags,
   Trash2,
-  Upload
+  Upload,
+  X
 } from "lucide-react";
 import { MultiNoteExportForm } from "@/modules/export/components/MultiNoteExportForm";
 import {
@@ -43,11 +44,15 @@ import {
   createTagAction,
   deleteFolderAction,
   deleteFolderForeverAction,
+  deleteTagAction,
   renameFolderAction,
+  renameTagAction,
+  removeTagFromAllNotesAction,
   restoreArchivedFolderAction,
   restoreTrashedFolderAction,
   togglePinFolderAction,
-  toggleTagOnNoteAction
+  toggleTagOnNoteAction,
+  updateTagColorAction
 } from "@/modules/organization/organization.actions";
 import type { FolderSummary, TagSummary } from "@/modules/organization/organization.types";
 import { createNoteFromTemplateAction } from "@/modules/templates/template.actions";
@@ -59,7 +64,23 @@ import { buildFolderTree, getPrimaryTagColor, type FolderTreeNode } from "../wor
 type ContextMenuState =
   | { type: "note"; note: NoteSummary; x: number; y: number }
   | { type: "folder"; folder: FolderTreeNode; x: number; y: number }
+  | { type: "tag"; tag: TagSummary; x: number; y: number }
   | null;
+
+const tagColorPresets = [
+  "#ef4444",
+  "#f97316",
+  "#f59e0b",
+  "#84cc16",
+  "#22c55e",
+  "#14b8a6",
+  "#06b6d4",
+  "#3b82f6",
+  "#8b5cf6",
+  "#d946ef",
+  "#ec4899",
+  "#64748b"
+];
 
 export function ExplorerPanel({
   notes,
@@ -87,10 +108,47 @@ export function ExplorerPanel({
   const tree = buildFolderTree(folders, notes);
   const visibleTree = workspaceView === "active" ? tree : filterEmptyFolders(tree);
   const searchResults = useMemo(() => searchNotes(notes, searchQuery), [notes, searchQuery]);
+  const activeTag = activeTagId ? tags.find((tag) => tag.id === activeTagId) ?? null : null;
+  const activeTagNotes = activeTagId ? notes.filter((note) => note.tagIds.includes(activeTagId)) : [];
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [tagPendingDelete, setTagPendingDelete] = useState<TagSummary | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return;
+    }
+
+    function closeOnPointerDown(event: PointerEvent) {
+      if (contextMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setContextMenu(null);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    }
+
+    function closeOnActivityChange() {
+      setContextMenu(null);
+    }
+
+    document.addEventListener("pointerdown", closeOnPointerDown, true);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("technote:activity-change", closeOnActivityChange);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown, true);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("technote:activity-change", closeOnActivityChange);
+    };
+  }, [contextMenu]);
 
   function moveNoteToFolder(noteId: string, folderId: string | null) {
     startTransition(() => {
@@ -340,7 +398,7 @@ export function ExplorerPanel({
 
         <section data-activity-panel="tags" className="hidden space-y-3">
           <PanelTitle icon={<Tags size={14} />} title="Tags" />
-          <form action={createTagAction} className="grid grid-cols-[1fr_60px_auto] gap-2">
+          <form action={createTagAction} className="grid grid-cols-[1fr_auto] gap-2">
             <input
               name="name"
               className="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-xs outline-none"
@@ -348,25 +406,58 @@ export function ExplorerPanel({
               maxLength={60}
               required
             />
-            <input
-              name="color"
-              className="h-8 min-w-0 rounded-md border border-border bg-background px-2 text-xs outline-none"
-              placeholder="#"
-              maxLength={30}
-            />
             <button className="h-8 rounded-md border border-border px-2 text-xs hover:bg-muted">Add</button>
+            <div className="col-span-2">
+              <TagColorField />
+            </div>
           </form>
           <div className="space-y-1">
             {tags.map((tag) => (
-              <ExplorerLink
+              <TagExplorerRow
                 key={tag.id}
-                href={`/?tag=${tag.id}`}
-                label={tag.name}
+                tag={tag}
                 active={activeTagId === tag.id}
-                color={tag.color}
+                onRequestDelete={setTagPendingDelete}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setContextMenu({ type: "tag", tag, x: event.clientX, y: event.clientY });
+                }}
               />
             ))}
           </div>
+          {activeTag ? (
+            <div className="space-y-2 border-t border-border pt-3">
+              <div className="flex items-center gap-2 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: activeTag.color ?? "hsl(var(--muted-foreground))" }}
+                />
+                <span className="truncate">{activeTag.name}</span>
+              </div>
+              <div className="space-y-1">
+                {activeTagNotes.length > 0 ? (
+                  activeTagNotes.map((note) => (
+                    <NoteNode
+                      key={note.id}
+                      note={note}
+                      tags={tags}
+                      active={selectedNote?.id === note.id}
+                      workspaceView={workspaceView}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
+                      }}
+                    />
+                  ))
+                ) : (
+                  <p className="px-2 text-xs text-muted-foreground">No notes use this tag.</p>
+                )}
+              </div>
+            </div>
+          ) : (
+            <p className="px-2 text-xs text-muted-foreground">Select a tag to see applied notes.</p>
+          )}
         </section>
 
         <section data-activity-panel="export" className="hidden">
@@ -377,12 +468,16 @@ export function ExplorerPanel({
 
       {contextMenu ? (
         <ExplorerContextMenu
+          menuRef={contextMenuRef}
           menu={contextMenu}
           tags={tags}
           activeNoteId={selectedNote?.id}
           workspaceView={workspaceView}
           onClose={() => setContextMenu(null)}
         />
+      ) : null}
+      {tagPendingDelete ? (
+        <DeleteTagDialog tag={tagPendingDelete} onClose={() => setTagPendingDelete(null)} />
       ) : null}
     </aside>
   );
@@ -564,12 +659,14 @@ function NoteNode({
 }
 
 function ExplorerContextMenu({
+  menuRef,
   menu,
   tags,
   activeNoteId,
   workspaceView,
   onClose
 }: {
+  menuRef: RefObject<HTMLDivElement | null>;
   menu: NonNullable<ContextMenuState>;
   tags: TagSummary[];
   activeNoteId?: string;
@@ -584,11 +681,14 @@ function ExplorerContextMenu({
 
   return (
     <div
+      ref={menuRef}
       className="fixed z-50 min-w-56 rounded-md border border-border bg-panel-strong p-1 text-sm shadow-2xl"
       style={style}
       onClick={(event) => event.stopPropagation()}
     >
-      {menu.type === "note" ? (
+      {menu.type === "tag" ? (
+        <TagContextMenu tag={menu.tag} onClose={onClose} />
+      ) : menu.type === "note" ? (
         workspaceView === "archive" ? (
           <>
             <form action={restoreArchivedNoteAction} onSubmit={onClose}>
@@ -751,6 +851,92 @@ function closeNoteLocally(noteId: string, onClose: () => void) {
   onClose();
 }
 
+function TagContextMenu({ tag, onClose }: { tag: TagSummary; onClose: () => void }) {
+  const [renaming, setRenaming] = useState(false);
+  const [editingColor, setEditingColor] = useState(false);
+
+  return (
+    <>
+      {renaming ? (
+        <RenameForm
+          action={renameTagAction}
+          idName="tagId"
+          idValue={tag.id}
+          fieldName="name"
+          defaultName={tag.name}
+          onSubmit={onClose}
+        />
+      ) : (
+        <MenuButton onClick={() => setRenaming(true)}>Rename</MenuButton>
+      )}
+      {editingColor ? (
+        <form action={updateTagColorAction} className="p-1" onSubmit={onClose}>
+          <input type="hidden" name="tagId" value={tag.id} />
+          <TagColorField initialColor={tag.color ?? ""} autoFocus />
+          <button className="mt-1 w-full rounded-md bg-primary px-2 py-1.5 text-xs font-semibold text-primary-foreground">
+            Save color
+          </button>
+        </form>
+      ) : (
+        <MenuButton onClick={() => setEditingColor(true)}>Change color</MenuButton>
+      )}
+      <form
+        action={removeTagFromAllNotesAction}
+        onSubmit={(event) => {
+          if (!window.confirm(`Remove "${tag.name}" from all notes?`)) {
+            event.preventDefault();
+            return;
+          }
+          onClose();
+        }}
+      >
+        <input type="hidden" name="tagId" value={tag.id} />
+        <MenuSubmit danger icon={<Trash2 size={14} />}>Remove all applied notes</MenuSubmit>
+      </form>
+    </>
+  );
+}
+
+function TagColorField({
+  initialColor = "",
+  autoFocus = false
+}: {
+  initialColor?: string;
+  autoFocus?: boolean;
+}) {
+  const [color, setColor] = useState(initialColor);
+
+  return (
+    <div className="space-y-2">
+      <input
+        autoFocus={autoFocus}
+        name="color"
+        className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs outline-none focus:border-primary"
+        value={color}
+        maxLength={30}
+        placeholder="#0f766e or rgb(15, 118, 110)"
+        onChange={(event) => setColor(event.target.value)}
+      />
+      <div className="grid grid-cols-6 gap-1">
+        {tagColorPresets.map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            className={
+              "h-6 rounded-md border transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary " +
+              (color.trim().toLowerCase() === preset ? "border-foreground" : "border-border")
+            }
+            style={{ backgroundColor: preset }}
+            aria-label={`Use tag color ${preset}`}
+            title={preset}
+            onClick={() => setColor(preset)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ExplorerLink({
   href,
   label,
@@ -812,6 +998,95 @@ function ExplorerLink({
     >
       {content}
     </Link>
+  );
+}
+
+function TagExplorerRow({
+  tag,
+  active,
+  onRequestDelete,
+  onContextMenu
+}: {
+  tag: TagSummary;
+  active: boolean;
+  onRequestDelete: (tag: TagSummary) => void;
+  onContextMenu: (event: MouseEvent) => void;
+}) {
+  return (
+    <div className="group grid grid-cols-[minmax(0,1fr)_28px] items-center gap-1" onContextMenu={onContextMenu}>
+      <ExplorerLink href={`/?tag=${tag.id}`} label={tag.name} active={active} color={tag.color} />
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-70 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
+        aria-label={`Delete tag ${tag.name}`}
+        title="Delete tag"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onRequestDelete(tag);
+        }}
+      >
+        <X size={13} />
+      </button>
+    </div>
+  );
+}
+
+function DeleteTagDialog({ tag, onClose }: { tag: TagSummary; onClose: () => void }) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-tag-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="w-full max-w-sm rounded-md border border-border bg-panel-strong p-4 shadow-2xl">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-400">
+            <Trash2 size={16} />
+          </span>
+          <div className="min-w-0">
+            <h2 id="delete-tag-title" className="text-sm font-semibold text-foreground">
+              Delete tag
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Delete "{tag.name}" and remove it from every note?
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="h-8 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <form action={deleteTagAction} onSubmit={onClose}>
+            <input type="hidden" name="tagId" value={tag.id} />
+            <button className="h-8 rounded-md bg-red-500 px-3 text-xs font-semibold text-white hover:bg-red-600">
+              Delete
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
   );
 }
 

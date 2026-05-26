@@ -13,7 +13,10 @@ import {
   createFolderSchema,
   createTagSchema,
   folderIdSchema,
-  renameFolderSchema
+  renameTagSchema,
+  renameFolderSchema,
+  tagIdSchema,
+  updateTagColorSchema
 } from "./organization.schemas";
 
 export async function createFolderAction(formData: FormData) {
@@ -95,22 +98,238 @@ export async function assignParentFolderByIdsAction(folderId: string, parentId: 
 export async function createTagAction(formData: FormData) {
   const parsed = createTagSchema.parse({
     name: formData.get("name"),
-    color: formData.get("color") || undefined
+    color: normalizeTagColorInput(formData.get("color"))
   });
   const { supabase, user, workspaceId } = await getAuthedFoundation();
+
+  const { data: existingTags, error: existingTagsError } = await supabase
+    .from("tags")
+    .select("id, name, color")
+    .eq("owner_id", user.id)
+    .eq("workspace_id", workspaceId);
+
+  if (existingTagsError) {
+    throw existingTagsError;
+  }
+
+  const existingTag = (existingTags as Array<{ id: string; name?: string; color?: string | null }>).find(
+    (tag) => typeof tag.name === "string" && tag.name.toLowerCase() === parsed.name.toLowerCase()
+  );
+
+  if (existingTag) {
+    revalidateWorkspaceTagViews();
+    return;
+  }
+
+  const color = parsed.color && !hasTagColorConflict(existingTags, parsed.color) ? parsed.color : null;
 
   const { error } = await supabase.from("tags").insert({
     workspace_id: workspaceId,
     owner_id: user.id,
     name: parsed.name,
-    color: parsed.color || null
+    color
   });
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidateWorkspaceTagViews();
+      return;
+    }
+
+    throw error;
+  }
+
+  revalidateWorkspaceTagViews();
+}
+
+export async function renameTagAction(formData: FormData) {
+  const parsed = renameTagSchema.parse({
+    tagId: formData.get("tagId"),
+    name: formData.get("name")
+  });
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  await assertOwnedTag(supabase, user.id, parsed.tagId);
+
+  const { data: existingTags, error: existingTagsError } = await supabase
+    .from("tags")
+    .select("id, name")
+    .eq("owner_id", user.id)
+    .eq("workspace_id", workspaceId);
+
+  if (existingTagsError) {
+    throw existingTagsError;
+  }
+
+  const nameConflict = (existingTags as Array<{ id: string; name?: string }>).some(
+    (tag) =>
+      tag.id !== parsed.tagId &&
+      typeof tag.name === "string" &&
+      tag.name.toLowerCase() === parsed.name.toLowerCase()
+  );
+
+  if (nameConflict) {
+    revalidateWorkspaceTagViews();
+    return;
+  }
+
+  const { error } = await supabase
+    .from("tags")
+    .update({ name: parsed.name })
+    .eq("owner_id", user.id)
+    .eq("id", parsed.tagId);
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidateWorkspaceTagViews();
+      return;
+    }
+
+    throw error;
+  }
+
+  revalidateWorkspaceTagViews();
+}
+
+export async function updateTagColorAction(formData: FormData) {
+  const parsed = updateTagColorSchema.parse({
+    tagId: formData.get("tagId"),
+    color: normalizeTagColorInput(formData.get("color"))
+  });
+  const { supabase, user, workspaceId } = await getAuthedFoundation();
+  await assertOwnedTag(supabase, user.id, parsed.tagId);
+
+  const { data: existingTags, error: existingTagsError } = await supabase
+    .from("tags")
+    .select("id, color")
+    .eq("owner_id", user.id)
+    .eq("workspace_id", workspaceId);
+
+  if (existingTagsError) {
+    throw existingTagsError;
+  }
+
+  if (parsed.color && hasTagColorConflict(existingTags, parsed.color, parsed.tagId)) {
+    revalidateWorkspaceTagViews();
+    return;
+  }
+
+  const { error } = await supabase
+    .from("tags")
+    .update({ color: parsed.color || null })
+    .eq("owner_id", user.id)
+    .eq("id", parsed.tagId);
 
   if (error) {
     throw error;
   }
 
+  revalidateWorkspaceTagViews();
+}
+
+export async function removeTagFromAllNotesAction(formData: FormData) {
+  const tagId = tagIdSchema.parse(formData.get("tagId"));
+  const { supabase, user } = await getAuthedFoundation();
+  await assertOwnedTag(supabase, user.id, tagId);
+
+  const { data: taggedNotes, error: taggedNotesError } = await supabase
+    .from("note_tags")
+    .select("note_id")
+    .eq("owner_id", user.id)
+    .eq("tag_id", tagId);
+
+  if (taggedNotesError) {
+    throw taggedNotesError;
+  }
+
+  const { error } = await supabase
+    .from("note_tags")
+    .delete()
+    .eq("owner_id", user.id)
+    .eq("tag_id", tagId);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidateWorkspaceTagViews();
+
+  for (const noteId of new Set((taggedNotes as Array<{ note_id: string }>).map((row) => row.note_id))) {
+    revalidatePath(`/notes/${noteId}`);
+  }
+}
+
+export async function deleteTagAction(formData: FormData) {
+  const tagId = tagIdSchema.parse(formData.get("tagId"));
+  const { supabase, user } = await getAuthedFoundation();
+  await assertOwnedTag(supabase, user.id, tagId);
+
+  const { data: taggedNotes, error: taggedNotesError } = await supabase
+    .from("note_tags")
+    .select("note_id")
+    .eq("owner_id", user.id)
+    .eq("tag_id", tagId);
+
+  if (taggedNotesError) {
+    throw taggedNotesError;
+  }
+
+  const { error: relationError } = await supabase
+    .from("note_tags")
+    .delete()
+    .eq("owner_id", user.id)
+    .eq("tag_id", tagId);
+
+  if (relationError) {
+    throw relationError;
+  }
+
+  const { error } = await supabase
+    .from("tags")
+    .delete()
+    .eq("owner_id", user.id)
+    .eq("id", tagId);
+
+  if (error) {
+    throw error;
+  }
+
+  revalidateWorkspaceTagViews();
+
+  for (const noteId of new Set((taggedNotes as Array<{ note_id: string }>).map((row) => row.note_id))) {
+    revalidatePath(`/notes/${noteId}`);
+  }
+}
+
+function revalidateWorkspaceTagViews() {
   revalidatePath("/");
+  revalidatePath("/archive");
+  revalidatePath("/trash");
+  revalidatePath("/notes/[noteId]", "page");
+}
+
+function hasTagColorConflict(
+  tags: unknown,
+  color: string,
+  ignoredTagId?: string
+) {
+  const normalizedColor = color.trim().toLowerCase();
+
+  if (!normalizedColor) {
+    return false;
+  }
+
+  return (tags as Array<{ id: string; color?: string | null }>).some(
+    (tag) => tag.id !== ignoredTagId && tag.color?.trim().toLowerCase() === normalizedColor
+  );
+}
+
+function normalizeTagColorInput(value: FormDataEntryValue | null) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const color = value.trim();
+  return color && color !== "#" ? color : undefined;
 }
 
 export async function createNoteInFolderAction(formData: FormData) {

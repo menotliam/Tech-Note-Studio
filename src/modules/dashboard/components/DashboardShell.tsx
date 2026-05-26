@@ -10,11 +10,10 @@ import type { UserPreferences } from "@/modules/preferences/preferences.types";
 import { getPreferenceStyle } from "@/modules/preferences/preferences.ui";
 import type { TemplateSummary } from "@/modules/templates/template.types";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
-import { ActivityBar } from "@/modules/workspace-shell/components/ActivityBar";
 import { EditorTabStrip } from "@/modules/workspace-shell/components/EditorTabStrip";
-import { ExplorerPanel } from "@/modules/workspace-shell/components/ExplorerPanel";
 import type { WorkspaceActivity } from "@/modules/workspace-shell/workspace-shell.types";
 import { extractOutlineItems } from "@/modules/workspace-shell/workspace-shell.utils";
+import { WorkspaceGridShell } from "./WorkspaceGridShell";
 
 export function DashboardShell({
   userEmail,
@@ -63,32 +62,21 @@ export function DashboardShell({
       <PreferenceThemeApplier preferences={preferences} />
       {workspaceView === "active" ? <RecentNotesCache notes={notes} /> : null}
       <SyncQueueProcessor />
-      <div
-        data-ide-shell="true"
-        data-sidebar-collapsed={String(preferences.dashboard.sidebarCollapsed)}
-        data-active-activity={initialActivity}
-        data-focus-mode={String(preferences.dashboard.focusModeEnabled)}
-        className="grid h-screen min-h-0 grid-cols-1 overflow-hidden lg:grid-cols-[56px_300px_minmax(0,1fr)]"
+      <WorkspaceGridShell
+        preferences={preferences}
+        workspace={workspace}
+        userEmail={userEmail}
+        initialActivity={initialActivity}
+        notes={notes}
+        templates={templates}
+        folders={folders}
+        tags={tags}
+        selectedNote={selectedNote}
+        searchQuery={searchQuery}
+        activeFolderId={activeFolderId}
+        activeTagId={activeTagId}
+        workspaceView={workspaceView}
       >
-        <ActivityBar
-          preferences={preferences}
-          workspace={workspace}
-          userEmail={userEmail}
-          initialActivity={initialActivity}
-        />
-        <ExplorerPanel
-          notes={notes}
-          templates={templates}
-          folders={folders}
-          tags={tags}
-          selectedNote={selectedNote}
-          searchQuery={searchQuery}
-          activeFolderId={activeFolderId}
-          activeTagId={activeTagId}
-          workspace={workspace}
-          workspaceView={workspaceView}
-        />
-
         <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background" data-editor-workbench>
           <EditorTabStrip currentNote={currentNoteForChrome} splitNote={splitNoteForChrome} />
           {selectedNote ? (
@@ -140,7 +128,7 @@ export function DashboardShell({
             </div>
           )}
         </section>
-      </div>
+      </WorkspaceGridShell>
     </main>
   );
 }

@@ -26,10 +26,21 @@ export const assignTagSchema = z.object({
 });
 
 export const folderIdSchema = organizationIdSchema;
+export const tagIdSchema = organizationIdSchema;
 
 export const renameFolderSchema = z.object({
   folderId: organizationIdSchema,
   name: folderNameSchema
+});
+
+export const renameTagSchema = z.object({
+  tagId: organizationIdSchema,
+  name: tagNameSchema
+});
+
+export const updateTagColorSchema = z.object({
+  tagId: organizationIdSchema,
+  color: colorSchema
 });
 
 export const assignParentFolderSchema = z.object({

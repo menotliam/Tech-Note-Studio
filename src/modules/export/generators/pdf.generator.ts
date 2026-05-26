@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { deflateSync, inflateSync } from "node:zlib";
 import type { ExportBlock, ExportBundle, ExportDocument } from "../export.types";
 
 const page = {
@@ -26,6 +27,30 @@ type PdfLinkAnnotation = {
 type PdfDestination = {
   pageIndex: number;
   top: number;
+};
+
+type PdfImageResource = {
+  name: string;
+  width: number;
+  height: number;
+  storagePath: string;
+  createObjects: (objectIds: { softMaskObjectId?: number }) => string[];
+  softMask: boolean;
+};
+
+type ParsedPdfImage = {
+  width: number;
+  height: number;
+  colorSpace: "/DeviceRGB" | "/DeviceGray";
+  bitsPerComponent: 8;
+  filter: "/DCTDecode" | "/FlateDecode";
+  data: Buffer;
+  softMask?: {
+    data: Buffer;
+    colorSpace: "/DeviceGray";
+    bitsPerComponent: 8;
+    filter: "/FlateDecode";
+  };
 };
 
 type ParsedTrueTypeFont = {
@@ -73,7 +98,17 @@ export async function generatePdfBundle(bundle: ExportBundle): Promise<Buffer> {
       writer.text(document.title, { font: "F2", size: 20, gapAfter: 14 });
     }
 
-    document.blocks.forEach((block) => renderBlock(writer, block));
+    document.blocks.forEach((block) => {
+      try {
+        renderBlock(writer, block);
+      } catch (error) {
+        if (block.type === "image") {
+          throw new Error(`Could not embed image in "${document.title}".`, { cause: error });
+        }
+
+        throw error;
+      }
+    });
   });
 
   return writer.toBuffer();
@@ -125,7 +160,7 @@ function renderBlock(writer: PdfWriter, block: ExportBlock) {
       writer.text(block.code, { font: "F4", size: 9, preserveNewlines: true, gapAfter: 12 });
       break;
     case "image":
-      writer.text(`[Image: ${block.alt || block.src}]`, { font: "F3", size: 10, gapAfter: 10 });
+      writer.image(block);
       break;
     case "table":
       writer.table(block.rows, { font: "F1", size: 9, gapAfter: 12 });
@@ -137,6 +172,8 @@ class PdfWriter {
   private pages: PdfPage[] = [];
   private currentPage: PdfPage;
   private usedCharacterCodes = new Set<number>();
+  private imageResources: PdfImageResource[] = [];
+  private imageResourceByStoragePath = new Map<string, PdfImageResource>();
   private y = page.height - page.margin;
 
   constructor() {
@@ -245,6 +282,90 @@ class PdfWriter {
     this.gap(options.gapAfter ?? 0);
   }
 
+  image(block: Extract<ExportBlock, { type: "image" }>) {
+    if (!block.asset) {
+      throw new Error("Image asset was not loaded.");
+    }
+
+    const image = this.getImageResource(block);
+    const maxWidth = page.width - page.margin * 2;
+    const maxHeight = page.height - page.margin * 2 - 24;
+    const requestedWidth = typeof block.width === "number" ? block.width : image.width;
+    const drawWidth = Math.min(Math.max(requestedWidth, 1), image.width, maxWidth);
+    let drawHeight = (drawWidth / image.width) * image.height;
+    let finalWidth = drawWidth;
+
+    if (drawHeight > maxHeight) {
+      const scale = maxHeight / drawHeight;
+      finalWidth *= scale;
+      drawHeight = maxHeight;
+    }
+
+    const caption = block.caption?.trim();
+    const captionFontSize = 9;
+    const captionLineHeight = captionFontSize + 4;
+    const captionGapBefore = 8;
+    const captionGapAfter = 10;
+    const captionLines = caption
+      ? wrapText(caption, Math.max(12, Math.floor(finalWidth / (captionFontSize * 0.55))))
+      : [];
+    const captionHeight = captionLines.length > 0 ? captionGapBefore + captionLines.length * captionLineHeight + captionGapAfter : 0;
+    this.gap(6);
+    this.ensureSpace(drawHeight + captionHeight + 12);
+
+    const x = page.margin;
+    const y = this.y - drawHeight;
+    this.currentPage.commands.push(
+      `q ${formatPdfNumber(finalWidth)} 0 0 ${formatPdfNumber(drawHeight)} ${formatPdfNumber(x)} ${formatPdfNumber(y)} cm /${image.name} Do Q`
+    );
+    this.y = y;
+
+    if (captionLines.length > 0) {
+      this.imageCaption(captionLines, {
+        font: "F3",
+        size: captionFontSize,
+        lineHeight: captionLineHeight,
+        imageX: x,
+        imageWidth: finalWidth,
+        gapBefore: captionGapBefore,
+        gapAfter: captionGapAfter
+      });
+    } else {
+      this.gap(10);
+    }
+  }
+
+  private imageCaption(
+    lines: string[],
+    options: {
+      font: FontName;
+      size: number;
+      lineHeight: number;
+      imageX: number;
+      imageWidth: number;
+      gapBefore: number;
+      gapAfter: number;
+    }
+  ) {
+    this.gap(options.gapBefore);
+
+    lines.forEach((line) => {
+      this.ensureSpace(options.lineHeight);
+      const text = line || " ";
+      const textWidth = estimateTextWidth(text, options.size);
+      const centeredX = options.imageX + (options.imageWidth - textWidth) / 2;
+      const x = Math.max(page.margin, Math.min(centeredX, page.width - page.margin - textWidth));
+
+      this.trackCharacters(text);
+      this.currentPage.commands.push(
+        `BT /${options.font} ${options.size} Tf ${formatPdfNumber(x)} ${formatPdfNumber(this.y - options.size)} Td ${toPdfHexString(text)} Tj ET`
+      );
+      this.y -= options.lineHeight;
+    });
+
+    this.gap(options.gapAfter);
+  }
+
   pageBreak() {
     this.currentPage = this.addPage();
     this.y = page.height - page.margin;
@@ -276,6 +397,32 @@ class PdfWriter {
     objects.push(...embeddedFonts.objects);
 
     let nextObjectId = objects.length + 1;
+    const imageObjectRecords = this.imageResources.map((imageResource) => {
+      const imageObjectId = nextObjectId;
+      nextObjectId += 1;
+      const softMaskObjectId = imageResource.softMask ? nextObjectId : undefined;
+
+      if (imageResource.softMask) {
+        nextObjectId += 1;
+      }
+
+      return {
+        imageResource,
+        imageObjectId,
+        softMaskObjectId
+      };
+    });
+
+    imageObjectRecords.forEach(({ imageResource, imageObjectId, softMaskObjectId }) => {
+      objects.push(...imageResource.createObjects({ softMaskObjectId }));
+    });
+
+    const xObjectResources =
+      imageObjectRecords.length > 0
+        ? `/XObject << ${imageObjectRecords
+            .map(({ imageResource, imageObjectId }) => `/${imageResource.name} ${imageObjectId} 0 R`)
+            .join(" ")} >>`
+        : "";
     const pageRecords = this.pages.map((pdfPage) => {
       const links = pdfPage.links.filter((link) => this.destinations.has(link.destination));
       const contentId = nextObjectId;
@@ -333,6 +480,7 @@ class PdfWriter {
           `/F3 ${embeddedFonts.sansFontObjectId} 0 R`,
           `/F4 ${embeddedFonts.monoFontObjectId} 0 R`,
           ">>",
+          xObjectResources,
           ">>",
           `/Contents ${contentId} 0 R`,
           annots,
@@ -370,6 +518,30 @@ class PdfWriter {
     }
   }
 
+  private getImageResource(block: Extract<ExportBlock, { type: "image" }>) {
+    const asset = block.asset!;
+    const cached = this.imageResourceByStoragePath.get(asset.storagePath);
+
+    if (cached) {
+      return cached;
+    }
+
+    const parsedImage = parsePdfImage(asset.data, asset.mimeType);
+    const name = `Im${this.imageResources.length + 1}`;
+    const imageResource: PdfImageResource = {
+      name,
+      width: parsedImage.width,
+      height: parsedImage.height,
+      storagePath: asset.storagePath,
+      softMask: Boolean(parsedImage.softMask),
+      createObjects: ({ softMaskObjectId }) => createPdfImageObjects(parsedImage, softMaskObjectId)
+    };
+
+    this.imageResources.push(imageResource);
+    this.imageResourceByStoragePath.set(asset.storagePath, imageResource);
+    return imageResource;
+  }
+
   private addPage(): PdfPage {
     const pdfPage = { commands: [], links: [] };
     this.pages.push(pdfPage);
@@ -392,6 +564,271 @@ class PdfWriter {
   }
 
   private destinations = new Map<string, PdfDestination>();
+}
+
+function parsePdfImage(data: Buffer, mimeType: string): ParsedPdfImage {
+  if (mimeType === "image/jpeg") {
+    const dimensions = readJpegDimensions(data);
+
+    return {
+      width: dimensions.width,
+      height: dimensions.height,
+      colorSpace: "/DeviceRGB",
+      bitsPerComponent: 8,
+      filter: "/DCTDecode",
+      data
+    };
+  }
+
+  if (mimeType === "image/png") {
+    return parsePngForPdf(data);
+  }
+
+  throw new Error("PDF export supports PNG and JPEG images.");
+}
+
+function createPdfImageObjects(image: ParsedPdfImage, softMaskObjectId?: number) {
+  const softMaskReference = image.softMask && softMaskObjectId ? `/SMask ${softMaskObjectId} 0 R` : "";
+  const imageObject = createHexStream(image.data, {
+    filter: image.filter,
+    dictionaryEntries: [
+      "/Type /XObject",
+      "/Subtype /Image",
+      `/Width ${image.width}`,
+      `/Height ${image.height}`,
+      `/ColorSpace ${image.colorSpace}`,
+      `/BitsPerComponent ${image.bitsPerComponent}`,
+      softMaskReference
+    ].filter(Boolean)
+  });
+
+  if (!image.softMask || !softMaskObjectId) {
+    return [imageObject];
+  }
+
+  return [
+    imageObject,
+    createHexStream(image.softMask.data, {
+      filter: image.softMask.filter,
+      dictionaryEntries: [
+        "/Type /XObject",
+        "/Subtype /Image",
+        `/Width ${image.width}`,
+        `/Height ${image.height}`,
+        `/ColorSpace ${image.softMask.colorSpace}`,
+        `/BitsPerComponent ${image.softMask.bitsPerComponent}`
+      ]
+    })
+  ];
+}
+
+function readJpegDimensions(data: Buffer) {
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) {
+    throw new Error("Invalid JPEG image.");
+  }
+
+  let offset = 2;
+
+  while (offset < data.length) {
+    while (data[offset] === 0xff) {
+      offset += 1;
+    }
+
+    const marker = data[offset];
+    offset += 1;
+
+    if (marker === 0xd9 || marker === 0xda) {
+      break;
+    }
+
+    const segmentLength = data.readUInt16BE(offset);
+
+    if (isJpegStartOfFrameMarker(marker)) {
+      return {
+        height: data.readUInt16BE(offset + 3),
+        width: data.readUInt16BE(offset + 5)
+      };
+    }
+
+    offset += segmentLength;
+  }
+
+  throw new Error("Could not read JPEG dimensions.");
+}
+
+function isJpegStartOfFrameMarker(marker: number | undefined) {
+  return marker !== undefined && marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+function parsePngForPdf(data: Buffer): ParsedPdfImage {
+  if (!data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    throw new Error("Invalid PNG image.");
+  }
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset < data.length) {
+    const length = data.readUInt32BE(offset);
+    const type = data.toString("ascii", offset + 4, offset + 8);
+    const chunk = data.subarray(offset + 8, offset + 8 + length);
+
+    if (type === "IHDR") {
+      width = chunk.readUInt32BE(0);
+      height = chunk.readUInt32BE(4);
+      bitDepth = chunk[8];
+      colorType = chunk[9];
+    } else if (type === "IDAT") {
+      idatChunks.push(chunk);
+    } else if (type === "IEND") {
+      break;
+    }
+
+    offset += length + 12;
+  }
+
+  if (!width || !height || bitDepth !== 8) {
+    throw new Error("Unsupported PNG image.");
+  }
+
+  const decodedRows = unfilterPngScanlines({
+    data: inflateSync(Buffer.concat(idatChunks)),
+    width,
+    height,
+    bytesPerPixel: getPngBytesPerPixel(colorType)
+  });
+  const normalized = normalizePngRowsForPdf(decodedRows, width, height, colorType);
+
+  return {
+    width,
+    height,
+    colorSpace: normalized.colorSpace,
+    bitsPerComponent: 8,
+    filter: "/FlateDecode",
+    data: deflateSync(normalized.colorData),
+    softMask: normalized.alphaData
+      ? {
+          data: deflateSync(normalized.alphaData),
+          colorSpace: "/DeviceGray",
+          bitsPerComponent: 8,
+          filter: "/FlateDecode"
+        }
+      : undefined
+  };
+}
+
+function getPngBytesPerPixel(colorType: number) {
+  switch (colorType) {
+    case 0:
+      return 1;
+    case 2:
+      return 3;
+    case 4:
+      return 2;
+    case 6:
+      return 4;
+    default:
+      throw new Error("Unsupported PNG color type.");
+  }
+}
+
+function unfilterPngScanlines({
+  data,
+  width,
+  height,
+  bytesPerPixel
+}: {
+  data: Buffer;
+  width: number;
+  height: number;
+  bytesPerPixel: number;
+}) {
+  const rowLength = width * bytesPerPixel;
+  const rows: Buffer[] = [];
+  let offset = 0;
+
+  for (let rowIndex = 0; rowIndex < height; rowIndex += 1) {
+    const filterType = data[offset];
+    const row = Buffer.from(data.subarray(offset + 1, offset + 1 + rowLength));
+    const previousRow = rows[rowIndex - 1];
+
+    for (let index = 0; index < row.length; index += 1) {
+      const left = index >= bytesPerPixel ? row[index - bytesPerPixel] : 0;
+      const up = previousRow?.[index] ?? 0;
+      const upLeft = index >= bytesPerPixel ? previousRow?.[index - bytesPerPixel] ?? 0 : 0;
+
+      if (filterType === 1) {
+        row[index] = (row[index] + left) & 0xff;
+      } else if (filterType === 2) {
+        row[index] = (row[index] + up) & 0xff;
+      } else if (filterType === 3) {
+        row[index] = (row[index] + Math.floor((left + up) / 2)) & 0xff;
+      } else if (filterType === 4) {
+        row[index] = (row[index] + paethPredictor(left, up, upLeft)) & 0xff;
+      } else if (filterType !== 0) {
+        throw new Error("Unsupported PNG filter.");
+      }
+    }
+
+    rows.push(row);
+    offset += rowLength + 1;
+  }
+
+  return rows;
+}
+
+function normalizePngRowsForPdf(rows: Buffer[], width: number, height: number, colorType: number) {
+  if (colorType === 0) {
+    return {
+      colorSpace: "/DeviceGray" as const,
+      colorData: Buffer.concat(rows)
+    };
+  }
+
+  const hasAlpha = colorType === 4 || colorType === 6;
+  const colorChannels = colorType === 2 || colorType === 6 ? 3 : 1;
+  const sourceChannels = getPngBytesPerPixel(colorType);
+  const colorData = Buffer.alloc(width * height * colorChannels);
+  const alphaData = hasAlpha ? Buffer.alloc(width * height) : undefined;
+  let colorOffset = 0;
+  let alphaOffset = 0;
+
+  rows.forEach((row) => {
+    for (let sourceOffset = 0; sourceOffset < row.length; sourceOffset += sourceChannels) {
+      for (let channel = 0; channel < colorChannels; channel += 1) {
+        colorData[colorOffset] = row[sourceOffset + channel];
+        colorOffset += 1;
+      }
+
+      if (alphaData) {
+        alphaData[alphaOffset] = row[sourceOffset + sourceChannels - 1];
+        alphaOffset += 1;
+      }
+    }
+  });
+
+  return {
+    colorSpace: colorChannels === 3 ? "/DeviceRGB" as const : "/DeviceGray" as const,
+    colorData,
+    alphaData
+  };
+}
+
+function paethPredictor(left: number, up: number, upLeft: number) {
+  const estimate = left + up - upLeft;
+  const distanceLeft = Math.abs(estimate - left);
+  const distanceUp = Math.abs(estimate - up);
+  const distanceUpLeft = Math.abs(estimate - upLeft);
+
+  if (distanceLeft <= distanceUp && distanceLeft <= distanceUpLeft) {
+    return left;
+  }
+
+  return distanceUp <= distanceUpLeft ? up : upLeft;
 }
 
 function wrapText(value: string, maxChars: number) {
@@ -758,10 +1195,20 @@ function createToUnicodeCMap(usedCharacterCodes: Set<number>) {
   ].join("\n");
 }
 
-function createHexStream(buffer: Buffer, options?: { length1?: number }) {
+function createHexStream(
+  buffer: Buffer,
+  options?: {
+    length1?: number;
+    filter?: "/DCTDecode" | "/FlateDecode";
+    dictionaryEntries?: string[];
+  }
+) {
   const hex = buffer.toString("hex");
   const length1 = options?.length1 ? ` /Length1 ${options.length1}` : "";
-  return `<< /Length ${hex.length + 1} /Filter /ASCIIHexDecode${length1} >>\nstream\n${hex}>\nendstream`;
+  const filters = options?.filter ? `[/ASCIIHexDecode ${options.filter}]` : "/ASCIIHexDecode";
+  const dictionaryEntries = options?.dictionaryEntries?.length ? ` ${options.dictionaryEntries.join(" ")}` : "";
+
+  return `<< /Length ${hex.length + 1} /Filter ${filters}${length1}${dictionaryEntries} >>\nstream\n${hex}>\nendstream`;
 }
 
 function createTextStream(value: string) {

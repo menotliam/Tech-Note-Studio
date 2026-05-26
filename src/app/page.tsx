@@ -33,7 +33,7 @@ export default async function HomePage({
   const folderId = params?.folder ? organizationIdSchema.parse(params.folder) : undefined;
   const tagId = params?.tag ? organizationIdSchema.parse(params.tag) : undefined;
   const [notes, templates, folders, tags, preferences, workspace] = await Promise.all([
-    listNotes(supabase, user.id),
+    listNotes(supabase, user.id, searchQuery ?? undefined, { folderId, tagId }),
     listSystemTemplates(supabase),
     listFolders(supabase, user.id, workspaceId),
     listTags(supabase, user.id, workspaceId),

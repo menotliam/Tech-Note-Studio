@@ -49,7 +49,7 @@ export default async function NotePage({
       ? noteIdSchema.safeParse(resolvedSearchParams.split)
       : null;
   const [notes, selectedNote, splitNote, templates, folders, tags, preferences, workspace] = await Promise.all([
-    listNotes(supabase, user.id),
+    listNotes(supabase, user.id, searchQuery ?? undefined, { folderId, tagId }),
     getNoteById(supabase, user.id, noteId.data),
     splitNoteId?.success ? getNoteById(supabase, user.id, splitNoteId.data) : Promise.resolve(null),
     listSystemTemplates(supabase),
