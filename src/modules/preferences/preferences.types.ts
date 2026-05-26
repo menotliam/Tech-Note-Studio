@@ -12,6 +12,7 @@ import type {
   noteListStyleValues,
   themePreferenceValues
 } from "./preferences.defaults";
+import type { KeybindingPreferences } from "@/modules/keybindings/keybindings.types";
 
 export type ThemePreference = (typeof themePreferenceValues)[number];
 export type AccentPreset = (typeof accentPresetValues)[number];
@@ -52,6 +53,7 @@ export type EditorPreferences = {
   autoDetectionEnabled: boolean;
   markdownShortcutsEnabled: boolean;
   clipboardImagePasteEnabled: boolean;
+  keybindings: KeybindingPreferences;
 };
 
 export type ExportPreferences = {

@@ -76,7 +76,8 @@ export function createPreferencesFromLegacyEditorPreferences(
         legacyEditorPreferences?.default_line_numbers ?? defaultUserPreferences.editor.defaultLineNumbers,
       defaultWordWrap: legacyEditorPreferences?.default_word_wrap ?? defaultUserPreferences.editor.defaultWordWrap,
       autoDetectionEnabled:
-        legacyEditorPreferences?.auto_detection_enabled ?? defaultUserPreferences.editor.autoDetectionEnabled
+        legacyEditorPreferences?.auto_detection_enabled ?? defaultUserPreferences.editor.autoDetectionEnabled,
+      keybindings: { ...defaultUserPreferences.editor.keybindings }
     },
     export: { ...defaultUserPreferences.export }
   };

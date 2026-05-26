@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ComponentType } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -50,9 +50,9 @@ export function ActivityBar({
   const workspaceAccent = workspace.accent ? getAccentPresetDefinition(workspace.accent) : null;
   const workspaceCover = workspace.cover ? getGradientPresetDefinition(workspace.cover) : null;
 
-  function setWorkspaceAttribute(name: string, value: string) {
+  const setWorkspaceAttribute = useCallback((name: string, value: string) => {
     document.querySelector("[data-ide-shell]")?.setAttribute(name, value);
-  }
+  }, []);
 
   function updateActivity(activity: WorkspaceActivity) {
     setActiveActivity(activity);
@@ -69,6 +69,24 @@ export function ActivityBar({
       body: JSON.stringify({ dashboard: { focusModeEnabled: nextFocusMode } })
     });
   }
+
+  useEffect(() => {
+    function handleToggleFocusMode() {
+      setFocusMode((currentFocusMode) => {
+        const nextFocusMode = !currentFocusMode;
+        setWorkspaceAttribute("data-focus-mode", String(nextFocusMode));
+        void fetch("/api/preferences", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dashboard: { focusModeEnabled: nextFocusMode } })
+        });
+        return nextFocusMode;
+      });
+    }
+
+    window.addEventListener("technote:toggle-focus-mode", handleToggleFocusMode);
+    return () => window.removeEventListener("technote:toggle-focus-mode", handleToggleFocusMode);
+  }, [setWorkspaceAttribute]);
 
   return (
     <div className="flex h-full w-14 flex-col items-center border-r border-border bg-panel-strong py-3">

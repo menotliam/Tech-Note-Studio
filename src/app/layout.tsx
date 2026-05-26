@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,20 +14,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
+      <body suppressHydrationWarning>
+        <Script id="technote-theme-init" strategy="beforeInteractive">
+          {`
 try {
   var theme = window.localStorage.getItem("technote.theme") || "system";
   var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
   document.documentElement.classList.toggle("dark", theme === "dark" || (theme === "system" && prefersDark));
 } catch {}
-            `.trim()
-          }}
-        />
-      </head>
-      <body suppressHydrationWarning>{children}</body>
+          `.trim()}
+        </Script>
+        {children}
+      </body>
     </html>
   );
 }

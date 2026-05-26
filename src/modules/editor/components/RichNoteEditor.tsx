@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import { Extension, type CommandProps } from "@tiptap/core";
 import { EditorContent, type Editor, type JSONContent, useEditor } from "@tiptap/react";
 import { Fragment, type Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { NodeSelection, Selection, type EditorState, type Transaction } from "@tiptap/pm/state";
-import type { EditorView } from "@tiptap/pm/view";
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -24,6 +24,8 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ChevronDown,
+  ChevronUp,
   Heading1,
   Heading2,
   Heading3,
@@ -33,8 +35,13 @@ import {
   ListOrdered,
   Minus,
   Quote,
+  Search,
+  X,
   Table2
 } from "lucide-react";
+import { normalizeKeyboardEvent } from "@/modules/keybindings/keybindings.normalize";
+import { resolveKeybindingCommand } from "@/modules/keybindings/keybindings.registry";
+import type { KeybindingCommandId } from "@/modules/keybindings/keybindings.types";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { getPasteDetectionAction } from "@/modules/editor/editor-paste-detection";
 import { ImageBlock } from "@/modules/editor/extensions/ImageBlock";
@@ -65,9 +72,15 @@ type RichNoteEditorProps = {
 type TextAlignment = "left" | "center" | "right";
 type EditorContentNode = NonNullable<EditorDocument["content"]>[number];
 type EditorContentChildren = EditorContentNode[];
+type EditorFindMatch = { from: number; to: number };
+type EditorFindHighlightState = {
+  matches: EditorFindMatch[];
+  activeIndex: number;
+};
 
 const imageCaretAnchor = "\u200B";
 const internalImageDragType = "application/x-technote-image-position";
+const editorFindHighlightPluginKey = new PluginKey<EditorFindHighlightState>("editorFindHighlight");
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -173,6 +186,49 @@ const TextAlignmentExtension = Extension.create({
   }
 });
 
+const EditorFindHighlightExtension = Extension.create({
+  name: "editorFindHighlight",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<EditorFindHighlightState>({
+        key: editorFindHighlightPluginKey,
+        state: {
+          init() {
+            return {
+              matches: [],
+              activeIndex: 0
+            };
+          },
+          apply(transaction, previousState) {
+            return transaction.getMeta(editorFindHighlightPluginKey) ?? previousState;
+          }
+        },
+        props: {
+          decorations(state) {
+            const highlightState = editorFindHighlightPluginKey.getState(state);
+
+            if (!highlightState?.matches.length) {
+              return DecorationSet.empty;
+            }
+
+            return DecorationSet.create(
+              state.doc,
+              highlightState.matches.map((match, index) =>
+                Decoration.inline(match.from, match.to, {
+                  class:
+                    "editor-find-match " +
+                    (index === highlightState.activeIndex ? "editor-find-match-active" : "")
+                })
+              )
+            );
+          }
+        }
+      })
+    ];
+  }
+});
+
 export function RichNoteEditor({
   noteId,
   workspaceId,
@@ -190,13 +246,20 @@ export function RichNoteEditor({
   const [autoDetectionEnabled, setAutoDetectionEnabled] = useState(preferences.autoDetectionEnabled);
   const [isDirty, setIsDirty] = useState(false);
   const [activeTextAlignment, setActiveTextAlignment] = useState<TextAlignment>("left");
+  const [, refreshToolbarState] = useState(0);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatches, setFindMatches] = useState<EditorFindMatch[]>([]);
+  const [activeFindIndex, setActiveFindIndex] = useState(0);
   const [pendingCloseNoteId, setPendingCloseNoteId] = useState<string | null>(null);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
+  const saveCurrentNoteRef = useRef<(() => Promise<void>) | null>(null);
   const dirtyRef = useRef(false);
   const cacheWriteVersionRef = useRef(0);
   const savedCacheVersionRef = useRef(0);
   const cacheTimerRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const findInputRef = useRef<HTMLInputElement | null>(null);
   const [pasteSuggestion, setPasteSuggestion] = useState<{
     text: string;
     from: number;
@@ -302,6 +365,7 @@ export function RichNoteEditor({
         placeholder: "Write technical notes, paste code, or type / for structure later..."
       }),
       TextAlignmentExtension,
+      EditorFindHighlightExtension,
       ListKeyboardShortcuts.configure({
         maxDepth: 4
       }),
@@ -427,6 +491,31 @@ export function RichNoteEditor({
           position: droppedPosition
         });
         return true;
+      },
+      handleKeyDown(view, event) {
+        const shortcut = normalizeKeyboardEvent(event);
+
+        if (!shortcut) {
+          return false;
+        }
+
+        const commandId = resolveKeybindingCommand(preferences.keybindings, "editor", shortcut);
+
+        if (!commandId) {
+          return false;
+        }
+
+        event.preventDefault();
+        executeEditorKeybindingCommand({
+          commandId,
+          view,
+          saveCurrentNoteRef,
+          openFindPanel: () => {
+            setFindOpen(true);
+            window.requestAnimationFrame(() => findInputRef.current?.focus());
+          }
+        });
+        return true;
       }
     },
     onCreate({ editor: createdEditor }) {
@@ -446,6 +535,10 @@ export function RichNoteEditor({
     },
     onSelectionUpdate({ editor: updatedEditor }) {
       setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
+    },
+    onTransaction({ editor: updatedEditor }) {
+      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
+      refreshToolbarState((version) => version + 1);
     },
     onUpdate({ editor: updatedEditor }) {
       const document = toEditorDocument(updatedEditor.getJSON());
@@ -512,6 +605,10 @@ export function RichNoteEditor({
   }, [contentJson, contentText, editor, noteId, router, title]);
 
   useEffect(() => {
+    saveCurrentNoteRef.current = saveCurrentNote;
+  }, [saveCurrentNote]);
+
+  useEffect(() => {
     const form = document.getElementById(`note-editor-form-${noteId}`);
 
     function handleSubmit(event: Event) {
@@ -522,6 +619,37 @@ export function RichNoteEditor({
     form?.addEventListener("submit", handleSubmit);
     return () => form?.removeEventListener("submit", handleSubmit);
   }, [noteId, saveCurrentNote]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const matches = findQuery ? collectEditorFindMatches(editor, findQuery) : [];
+    setFindMatches(matches);
+    setActiveFindIndex((currentIndex) => Math.min(currentIndex, Math.max(matches.length - 1, 0)));
+  }, [contentJson, editor, findQuery]);
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    editor.view.dispatch(
+      editor.state.tr.setMeta(editorFindHighlightPluginKey, {
+        matches: findOpen ? findMatches : [],
+        activeIndex: Math.min(activeFindIndex, Math.max(findMatches.length - 1, 0))
+      } satisfies EditorFindHighlightState)
+    );
+  }, [activeFindIndex, editor, findMatches, findOpen]);
+
+  useEffect(() => {
+    if (!findOpen) {
+      return;
+    }
+
+    findInputRef.current?.focus();
+  }, [findOpen]);
 
   async function continueWithoutSaving() {
     if (!pendingCloseNoteId) {
@@ -648,6 +776,24 @@ export function RichNoteEditor({
           <ImageIcon size={15} />
         </ToolbarButton>
       </div>
+      {findOpen ? (
+        <EditorFindPanel
+          inputRef={findInputRef}
+          query={findQuery}
+          matchCount={findMatches.length}
+          activeIndex={activeFindIndex}
+          onQueryChange={(query) => {
+            setFindQuery(query);
+            setActiveFindIndex(0);
+          }}
+          onPrevious={() => setActiveFindIndex((activeFindIndex - 1 + findMatches.length) % findMatches.length)}
+          onNext={() => setActiveFindIndex((activeFindIndex + 1) % findMatches.length)}
+          onClose={() => {
+            setFindOpen(false);
+            setFindQuery("");
+          }}
+        />
+      ) : null}
       {titleControl ? <div className="px-5 pt-5">{titleControl}</div> : null}
       <input
         ref={imageInputRef}
@@ -776,6 +922,234 @@ function markNoteDirty(noteId: string, dirty: boolean) {
   }
 
   window.dispatchEvent(new CustomEvent("technote:note-dirty", { detail: { noteId, dirty } }));
+}
+
+function executeEditorKeybindingCommand({
+  commandId,
+  view,
+  saveCurrentNoteRef,
+  openFindPanel
+}: {
+  commandId: KeybindingCommandId;
+  view: EditorView;
+  saveCurrentNoteRef: MutableRefObject<(() => Promise<void>) | null>;
+  openFindPanel: () => void;
+}) {
+  switch (commandId) {
+    case "note.save":
+      void saveCurrentNoteRef.current?.();
+      return;
+    case "editor.find":
+      openFindPanel();
+      return;
+    case "editor.alignLeft":
+      applyTextAlignment(view, "left");
+      return;
+    case "editor.alignCenter":
+      applyTextAlignment(view, "center");
+      return;
+    case "editor.alignRight":
+      applyTextAlignment(view, "right");
+      return;
+    case "editor.toggleFocusMode":
+      dispatchToggleFocusMode();
+      return;
+    case "editor.insertCodeBlock":
+      insertManualCodeBlock(view);
+      return;
+  }
+}
+
+function applyTextAlignment(view: EditorView, alignment: TextAlignment) {
+  const { state, dispatch } = view;
+  const nextAlignment = sanitizeTextAlignment(alignment);
+
+  if (!nextAlignment) {
+    return;
+  }
+
+  const transaction = state.tr;
+  const { from, to, empty, $from } = state.selection;
+  let changed = false;
+
+  if (state.selection instanceof NodeSelection && state.selection.node.type.name === "image") {
+    const parentTarget = getSelectionParentTextAlignmentTarget(state);
+
+    if (parentTarget) {
+      transaction.setNodeMarkup(parentTarget.position, undefined, {
+        ...parentTarget.node.attrs,
+        textAlign: nextAlignment
+      });
+      changed = true;
+    }
+  } else if (state.selection instanceof NodeSelection && textAlignmentNodeTypes.has(state.selection.node.type.name)) {
+    transaction.setNodeMarkup(from, undefined, { ...state.selection.node.attrs, textAlign: nextAlignment });
+    changed = true;
+  } else if (empty) {
+    const nearbyImage = getNearbyImageTextAlignmentTarget(state);
+
+    if (nearbyImage) {
+      transaction.setNodeMarkup(nearbyImage.position, undefined, {
+        ...nearbyImage.node.attrs,
+        textAlign: nextAlignment
+      });
+      changed = true;
+    }
+
+    for (let depth = $from.depth; depth >= 0; depth -= 1) {
+      const node = $from.node(depth);
+
+      if (!changed && textAlignmentNodeTypes.has(node.type.name)) {
+        const position = depth === 0 ? 0 : $from.before(depth);
+        transaction.setNodeMarkup(position, undefined, { ...node.attrs, textAlign: nextAlignment });
+        changed = true;
+        break;
+      }
+    }
+  } else {
+    state.doc.nodesBetween(from, to, (node, position) => {
+      if (!textAlignmentNodeTypes.has(node.type.name)) {
+        return true;
+      }
+
+      transaction.setNodeMarkup(position, undefined, { ...node.attrs, textAlign: nextAlignment });
+      changed = true;
+      return false;
+    });
+  }
+
+  if (changed) {
+    dispatch(transaction.scrollIntoView());
+    view.focus();
+  }
+}
+
+function insertManualCodeBlock(view: EditorView) {
+  const { state, dispatch } = view;
+  const selectedText = state.selection.empty ? "" : state.doc.textBetween(state.selection.from, state.selection.to, "\n");
+  const insertPosition = state.selection.from;
+  const codeBlock = state.schema.nodes.codeBlock?.create({
+    language: "plaintext",
+    detectedType: "plain_text",
+    showLineNumbers: true,
+    wordWrap: false,
+    source: "manual",
+    confidence: 1
+  }, selectedText ? state.schema.text(selectedText) : undefined);
+
+  if (!codeBlock) {
+    return;
+  }
+
+  const transaction = state.tr.replaceSelectionWith(codeBlock);
+  const codeBlockPosition = transaction.mapping.map(insertPosition, -1);
+  const cursorPosition = Math.min(codeBlockPosition + 1 + selectedText.length, transaction.doc.content.size);
+  dispatch(transaction.setSelection(TextSelection.create(transaction.doc, cursorPosition)).scrollIntoView());
+  view.focus();
+}
+
+function dispatchToggleFocusMode() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.dispatchEvent(new CustomEvent("technote:toggle-focus-mode"));
+}
+
+function EditorFindPanel({
+  inputRef,
+  query,
+  matchCount,
+  activeIndex,
+  onQueryChange,
+  onPrevious,
+  onNext,
+  onClose
+}: {
+  inputRef: RefObject<HTMLInputElement | null>;
+  query: string;
+  matchCount: number;
+  activeIndex: number;
+  onQueryChange: (query: string) => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  const hasMatches = matchCount > 0;
+
+  return (
+    <div className="sticky left-2 top-[49px] z-20 mt-2 inline-flex w-fit max-w-[calc(100%-1rem)] items-center gap-1 rounded-md border border-border bg-panel-strong px-2 py-1.5 shadow-lg">
+      <Search size={15} className="text-muted-foreground" />
+      <input
+        ref={inputRef}
+        autoFocus
+        className="h-7 w-44 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+        value={query}
+        placeholder="Find in note"
+        onChange={(event) => onQueryChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && hasMatches) {
+            event.preventDefault();
+            if (event.shiftKey) {
+              onPrevious();
+              return;
+            }
+
+            onNext();
+            return;
+          }
+
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+          }
+        }}
+      />
+      <span className="min-w-12 text-right text-xs text-muted-foreground">
+        {query ? (hasMatches ? `${activeIndex + 1}/${matchCount}` : "0/0") : ""}
+      </span>
+      <ToolbarButton label="Previous match" active={false} onClick={hasMatches ? onPrevious : () => undefined}>
+        <ChevronUp size={15} />
+      </ToolbarButton>
+      <ToolbarButton label="Next match" active={false} onClick={hasMatches ? onNext : () => undefined}>
+        <ChevronDown size={15} />
+      </ToolbarButton>
+      <ToolbarButton label="Close find" active={false} onClick={onClose}>
+        <X size={15} />
+      </ToolbarButton>
+    </div>
+  );
+}
+
+function collectEditorFindMatches(editor: Editor, query: string): EditorFindMatch[] {
+  const normalizedQuery = query.trim().toLowerCase();
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const matches: EditorFindMatch[] = [];
+
+  editor.state.doc.descendants((node, position) => {
+    if (!node.isText || !node.text) {
+      return true;
+    }
+
+    const text = node.text.toLowerCase();
+    let index = text.indexOf(normalizedQuery);
+
+    while (index >= 0) {
+      matches.push({
+        from: position + index,
+        to: position + index + normalizedQuery.length
+      });
+      index = text.indexOf(normalizedQuery, index + normalizedQuery.length);
+    }
+
+    return true;
+  });
+
+  return matches;
 }
 
 function dispatchNoteSaveStarted(noteId: string) {

@@ -87,7 +87,8 @@ describe("preferences schemas", () => {
         defaultWordWrap: true,
         autoDetectionEnabled: false,
         markdownShortcutsEnabled: true,
-        clipboardImagePasteEnabled: true
+        clipboardImagePasteEnabled: true,
+        keybindings: defaultUserPreferences.editor.keybindings
       }
     });
 
@@ -102,6 +103,35 @@ describe("preferences schemas", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+
+  it("accepts normalized editor keybindings", () => {
+    const result = userPreferencesPatchSchema.safeParse({
+      editor: {
+        keybindings: {
+          ...defaultUserPreferences.editor.keybindings,
+          "editor.find": "ctrl+shift+f"
+        }
+      }
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.editor?.keybindings?.["editor.find"]).toBe("Mod+Shift+F");
+    }
+  });
+
+  it("rejects conflicting editor keybindings", () => {
+    const result = userPreferencesPatchSchema.safeParse({
+      editor: {
+        keybindings: {
+          ...defaultUserPreferences.editor.keybindings,
+          "editor.find": "Mod+S"
+        }
+      }
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it("rejects empty preference patches", () => {
@@ -125,6 +155,7 @@ describe("preferences schemas", () => {
     expect(preferences.editor.defaultWordWrap).toBe(true);
     expect(preferences.editor.autoDetectionEnabled).toBe(false);
     expect(preferences.editor.markdownShortcutsEnabled).toBe(true);
+    expect(preferences.editor.keybindings).toEqual(defaultUserPreferences.editor.keybindings);
     expect(preferences.appearance).toEqual(defaultUserPreferences.appearance);
   });
 });

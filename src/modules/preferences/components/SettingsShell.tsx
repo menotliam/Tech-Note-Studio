@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import type { ChangeEvent, FormEvent, ReactNode } from "react";
-import { useMemo, useState } from "react";
-import { ArrowLeft, Check, Monitor, Moon, Sun } from "lucide-react";
+import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Check, Keyboard, Monitor, Moon, RotateCcw, Sun } from "lucide-react";
+import { defaultEditorKeybindings } from "@/modules/keybindings/keybindings.defaults";
+import { isSafeShortcut, normalizeKeyboardEvent } from "@/modules/keybindings/keybindings.normalize";
+import { normalizeKeybindingPreferences, validateKeybindingPreferences } from "@/modules/keybindings/keybindings.schemas";
+import { keybindingCommands } from "@/modules/keybindings/keybindings.registry";
+import type { KeybindingPreferences } from "@/modules/keybindings/keybindings.types";
 import {
   codeThemeValues,
   dashboardDefaultViewValues,
@@ -24,13 +29,14 @@ import { workspaceIconValues } from "@/modules/workspace/workspace.schemas";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
 import { PreferenceThemeApplier } from "./PreferenceThemeApplier";
 
-type SettingsSection = "appearance" | "workspace" | "editor" | "export" | "account" | "security" | "storage";
+type SettingsSection = "appearance" | "workspace" | "editor" | "keybindings" | "export" | "account" | "security" | "storage";
 type SaveStatusValue = "idle" | "saving" | "saved" | "error";
 
 const sections: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
   { id: "workspace", label: "Workspace" },
   { id: "editor", label: "Editor" },
+  { id: "keybindings", label: "Keybindings" },
   { id: "export", label: "Export" },
   { id: "account", label: "Account" },
   { id: "security", label: "Security/Activity" },
@@ -142,6 +148,9 @@ export function SettingsShell({
           ) : null}
           {activeSection === "editor" ? (
             <EditorSettings preferences={preferences} updatePreferences={updatePreferences} />
+          ) : null}
+          {activeSection === "keybindings" ? (
+            <KeybindingsSettings preferences={preferences} updatePreferences={updatePreferences} />
           ) : null}
           {activeSection === "export" ? (
             <ExportSettings preferences={preferences} updatePreferences={updatePreferences} />
@@ -266,7 +275,7 @@ function AppearanceSettings({
   updatePreferences
 }: {
   preferences: UserPreferences;
-  updatePreferences: (patch: UserPreferencesPatch) => void;
+  updatePreferences: (patch: UserPreferencesPatch) => Promise<void>;
 }) {
   return (
     <div className="grid gap-5">
@@ -341,7 +350,7 @@ function EditorSettings({
   updatePreferences
 }: {
   preferences: UserPreferences;
-  updatePreferences: (patch: UserPreferencesPatch) => void;
+  updatePreferences: (patch: UserPreferencesPatch) => Promise<void>;
 }) {
   return (
     <div className="grid gap-5">
@@ -423,12 +432,160 @@ function EditorSettings({
   );
 }
 
+function KeybindingsSettings({
+  preferences,
+  updatePreferences
+}: {
+  preferences: UserPreferences;
+  updatePreferences: (patch: UserPreferencesPatch) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<KeybindingPreferences>(preferences.editor.keybindings);
+  const [error, setError] = useState<string | null>(null);
+  const [capturingCommandId, setCapturingCommandId] = useState<keyof KeybindingPreferences | null>(null);
+
+  useEffect(() => {
+    setDraft(preferences.editor.keybindings);
+  }, [preferences.editor.keybindings]);
+
+  function updateShortcut(commandId: keyof KeybindingPreferences, value: string) {
+    setDraft({
+      ...draft,
+      [commandId]: value
+    });
+    setError(null);
+  }
+
+  function captureShortcut(commandId: keyof KeybindingPreferences, event: KeyboardEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.key === "Escape") {
+      setCapturingCommandId(null);
+      return;
+    }
+
+    if (event.key === "Backspace" || event.key === "Delete") {
+      updateShortcut(commandId, "");
+      setCapturingCommandId(null);
+      return;
+    }
+
+    const shortcut = normalizeKeyboardEvent(event.nativeEvent);
+
+    if (!shortcut) {
+      return;
+    }
+
+    if (shortcut.split("+").length > 3) {
+      setError("Use at most 3 keys in a shortcut.");
+      return;
+    }
+
+    if (!isSafeShortcut(shortcut)) {
+      setError(`${shortcut} is reserved by the browser. Choose another shortcut.`);
+      return;
+    }
+
+    updateShortcut(commandId, shortcut);
+    setCapturingCommandId(null);
+  }
+
+  async function saveKeybindings() {
+    try {
+      const normalizedDraft = normalizeKeybindingPreferences(draft);
+      const validation = validateKeybindingPreferences(normalizedDraft);
+
+      if (!validation.ok) {
+        setError(validation.message);
+        return;
+      }
+
+      setDraft(normalizedDraft);
+      setError(null);
+      await updatePreferences({ editor: { keybindings: normalizedDraft } });
+    } catch {
+      setError("Use shortcuts like Mod+S, Mod+Shift+F, or Alt+Enter.");
+    }
+  }
+
+  async function resetKeybindings() {
+    const defaults = { ...defaultEditorKeybindings };
+    setDraft(defaults);
+    setError(null);
+    await updatePreferences({ editor: { keybindings: defaults } });
+  }
+
+  return (
+    <div className="grid gap-5">
+      <SettingsPanel title="Editor shortcuts">
+        <div className="grid gap-3">
+          {keybindingCommands
+            .filter((command) => command.scope === "editor")
+            .map((command) => (
+              <label
+                key={command.id}
+                className="grid gap-2 rounded-md border border-border bg-background p-3 text-sm md:grid-cols-[minmax(0,1fr)_220px]"
+              >
+                <span className="flex min-w-0 items-center gap-2 font-medium">
+                  <Keyboard size={15} className="text-muted-foreground" />
+                  {command.label}
+                </span>
+                <button
+                  type="button"
+                  className={
+                    "h-9 rounded-md border bg-panel px-3 text-left font-mono text-sm outline-none transition focus:border-primary " +
+                    (capturingCommandId === command.id ? "border-primary text-primary" : "border-border")
+                  }
+                  onClick={() => {
+                    setCapturingCommandId(command.id);
+                    setError(null);
+                  }}
+                  onBlur={() => {
+                    setCapturingCommandId((currentCommandId) =>
+                      currentCommandId === command.id ? null : currentCommandId
+                    );
+                  }}
+                  onKeyDown={(event) => captureShortcut(command.id, event)}
+                >
+                  {capturingCommandId === command.id ? "Press shortcut" : draft[command.id] || "Unassigned"}
+                </button>
+              </label>
+            ))}
+        </div>
+        {error ? <p className="mt-3 text-sm text-red-400">{error}</p> : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+            onClick={() => {
+              void saveKeybindings();
+            }}
+          >
+            <Check size={15} />
+            Save Keybindings
+          </button>
+          <button
+            type="button"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => {
+              void resetKeybindings();
+            }}
+          >
+            <RotateCcw size={15} />
+            Reset Defaults
+          </button>
+        </div>
+      </SettingsPanel>
+    </div>
+  );
+}
+
 function ExportSettings({
   preferences,
   updatePreferences
 }: {
   preferences: UserPreferences;
-  updatePreferences: (patch: UserPreferencesPatch) => void;
+  updatePreferences: (patch: UserPreferencesPatch) => Promise<void>;
 }) {
   return (
     <SettingsPanel title="Images">
@@ -610,6 +767,8 @@ function getSectionSubtitle(section: SettingsSection) {
       return "Workspace name, icon, cover, and default layout.";
     case "editor":
       return "Document width, typography, code, and input preferences.";
+    case "keybindings":
+      return "Custom shortcuts for editor commands.";
     case "export":
       return "Export behavior for generated documents.";
     case "account":

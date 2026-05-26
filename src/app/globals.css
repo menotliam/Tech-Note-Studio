@@ -185,6 +185,28 @@ select {
   padding-left: 1rem;
 }
 
+.ProseMirror .editor-find-match {
+  background: #fde68a;
+  border-radius: 0.125rem;
+  color: inherit;
+}
+
+.ProseMirror .editor-find-match-active {
+  background: #facc15;
+  box-shadow: 0 0 0 1px #ca8a04;
+}
+
+.dark .ProseMirror .editor-find-match {
+  background: #fef3c7;
+  color: #1f2937;
+}
+
+.dark .ProseMirror .editor-find-match-active {
+  background: #fde68a;
+  color: #1f2937;
+  box-shadow: 0 0 0 1px #facc15;
+}
+
 .ProseMirror pre {
   background: hsl(var(--code-block-background));
   border: 1px solid hsl(var(--code-block-border));
@@ -211,7 +233,30 @@ select {
 }
 
 .ProseMirror .technical-code-block {
+  border-color: color-mix(in srgb, var(--code-language-accent) 46%, hsl(var(--code-block-border)));
+  box-shadow:
+    inset 3px 0 0 var(--code-language-accent),
+    0 10px 24px rgb(0 0 0 / 0.08);
   margin-top: 0.75rem;
+}
+
+.ProseMirror .technical-code-block-header {
+  background:
+    linear-gradient(90deg, var(--code-language-accent-soft), transparent 58%),
+    hsl(var(--code-block-header));
+}
+
+.ProseMirror .technical-code-block-icon {
+  color: var(--code-language-accent);
+}
+
+.ProseMirror .technical-code-language-select {
+  border-color: color-mix(in srgb, var(--code-language-accent) 38%, hsl(var(--code-block-border)));
+}
+
+.ProseMirror .technical-code-language-select:focus {
+  border-color: var(--code-language-accent);
+  outline: 2px solid color-mix(in srgb, var(--code-language-accent) 24%, transparent);
 }
 
 .ProseMirror .technical-code-block pre {
@@ -229,6 +274,37 @@ select {
 
 .technical-code-block-content[data-highlighted="true"] {
   caret-color: hsl(var(--code-block-foreground));
+}
+
+.technical-code-block-content,
+.technical-code-block-highlight,
+.technical-code-block-highlight pre,
+.technical-code-block-highlight code {
+  tab-size: 2;
+}
+
+.technical-code-block-highlight pre {
+  background: transparent !important;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  margin: 0;
+  overflow: visible;
+  padding: 0 !important;
+  white-space: inherit;
+}
+
+.technical-code-block-highlight code {
+  background: transparent;
+  border-radius: 0;
+  display: block;
+  font: inherit;
+  line-height: inherit;
+  padding: 0;
+  white-space: inherit;
 }
 
 [data-active-activity="explorer"] [data-activity-panel="explorer"],

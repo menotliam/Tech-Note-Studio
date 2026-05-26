@@ -1,4 +1,5 @@
 import type { UserPreferences } from "./preferences.types";
+import { defaultEditorKeybindings } from "@/modules/keybindings/keybindings.defaults";
 
 export const themePreferenceValues = ["light", "dark", "system"] as const;
 export const accentPresetValues = ["cyan", "blue", "violet", "emerald", "amber", "rose"] as const;
@@ -37,7 +38,8 @@ export const defaultUserPreferences: UserPreferences = {
     defaultWordWrap: false,
     autoDetectionEnabled: true,
     markdownShortcutsEnabled: true,
-    clipboardImagePasteEnabled: true
+    clipboardImagePasteEnabled: true,
+    keybindings: defaultEditorKeybindings
   },
   export: {
     includeImageCaptions: true

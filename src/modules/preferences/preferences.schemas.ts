@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { keybindingPreferencesPatchSchema, keybindingPreferencesSchema } from "@/modules/keybindings/keybindings.schemas";
+import { isSafeShortcut, normalizeShortcut } from "@/modules/keybindings/keybindings.normalize";
 import {
   accentPresetValues,
   codeThemeValues,
@@ -48,7 +50,8 @@ export const editorPreferencesSchema = z.object({
   defaultWordWrap: z.boolean().default(defaultUserPreferences.editor.defaultWordWrap),
   autoDetectionEnabled: z.boolean().default(defaultUserPreferences.editor.autoDetectionEnabled),
   markdownShortcutsEnabled: z.boolean().default(defaultUserPreferences.editor.markdownShortcutsEnabled),
-  clipboardImagePasteEnabled: z.boolean().default(defaultUserPreferences.editor.clipboardImagePasteEnabled)
+  clipboardImagePasteEnabled: z.boolean().default(defaultUserPreferences.editor.clipboardImagePasteEnabled),
+  keybindings: keybindingPreferencesSchema.default(defaultUserPreferences.editor.keybindings)
 });
 
 export const exportPreferencesSchema = z.object({
@@ -92,7 +95,8 @@ const editorPreferencesPatchSchema = z
     defaultWordWrap: z.boolean().optional(),
     autoDetectionEnabled: z.boolean().optional(),
     markdownShortcutsEnabled: z.boolean().optional(),
-    clipboardImagePasteEnabled: z.boolean().optional()
+    clipboardImagePasteEnabled: z.boolean().optional(),
+    keybindings: keybindingPreferencesPatchSchema.optional()
   })
   .strict();
 
@@ -121,7 +125,7 @@ export function normalizeUserPreferences(input?: {
   return userPreferencesSchema.parse({
     appearance: input?.appearance ?? {},
     dashboard: input?.dashboard ?? {},
-    editor: input?.editor ?? {},
+    editor: sanitizePreferenceEditorInput(input?.editor),
     export: input?.export ?? {}
   });
 }
@@ -143,4 +147,38 @@ function mergePreferenceGroup<T extends object>(current: T, patch?: Partial<T>) 
     ...current,
     ...(patch ?? {})
   };
+}
+
+function sanitizePreferenceEditorInput(input: unknown) {
+  if (!isRecord(input)) {
+    return {};
+  }
+
+  if (!isRecord(input.keybindings)) {
+    return input;
+  }
+
+  const keybindings = { ...input.keybindings };
+
+  for (const [commandId, shortcut] of Object.entries(keybindings)) {
+    if (typeof shortcut !== "string") {
+      delete keybindings[commandId];
+      continue;
+    }
+
+    const normalizedShortcut = normalizeShortcut(shortcut);
+
+    if (!normalizedShortcut || !isSafeShortcut(normalizedShortcut)) {
+      delete keybindings[commandId];
+    }
+  }
+
+  return {
+    ...input,
+    keybindings
+  };
+}
+
+function isRecord(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input);
 }
