@@ -67,6 +67,15 @@ type ContextMenuState =
   | { type: "tag"; tag: TagSummary; x: number; y: number }
   | null;
 
+type ConfirmActionState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  action: (formData: FormData) => void | Promise<void>;
+  fields: Array<{ name: string; value: string }>;
+  onConfirm?: () => void;
+};
+
 const tagColorPresets = [
   "#ef4444",
   "#f97316",
@@ -114,6 +123,7 @@ export function ExplorerPanel({
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [tagPendingDelete, setTagPendingDelete] = useState<TagSummary | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [, startTransition] = useTransition();
 
@@ -265,6 +275,7 @@ export function ExplorerPanel({
           <LifecycleNavigation
             activeView={workspaceView}
             hasTrashItems={workspaceView === "trash" && (notes.length > 0 || folders.length > 0)}
+            requestConfirm={setConfirmAction}
           />
 
           {creatingFolder && workspaceView === "active" ? (
@@ -473,11 +484,18 @@ export function ExplorerPanel({
           tags={tags}
           activeNoteId={selectedNote?.id}
           workspaceView={workspaceView}
+          requestConfirm={(nextConfirmAction) => {
+            setConfirmAction(nextConfirmAction);
+            setContextMenu(null);
+          }}
           onClose={() => setContextMenu(null)}
         />
       ) : null}
       {tagPendingDelete ? (
         <DeleteTagDialog tag={tagPendingDelete} onClose={() => setTagPendingDelete(null)} />
+      ) : null}
+      {confirmAction ? (
+        <ConfirmActionDialog confirmAction={confirmAction} onClose={() => setConfirmAction(null)} />
       ) : null}
     </aside>
   );
@@ -664,6 +682,7 @@ function ExplorerContextMenu({
   tags,
   activeNoteId,
   workspaceView,
+  requestConfirm,
   onClose
 }: {
   menuRef: RefObject<HTMLDivElement | null>;
@@ -671,6 +690,7 @@ function ExplorerContextMenu({
   tags: TagSummary[];
   activeNoteId?: string;
   workspaceView: "active" | "archive" | "trash";
+  requestConfirm: (confirmAction: ConfirmActionState) => void;
   onClose: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -687,7 +707,7 @@ function ExplorerContextMenu({
       onClick={(event) => event.stopPropagation()}
     >
       {menu.type === "tag" ? (
-        <TagContextMenu tag={menu.tag} onClose={onClose} />
+        <TagContextMenu tag={menu.tag} requestConfirm={requestConfirm} onClose={onClose} />
       ) : menu.type === "note" ? (
         workspaceView === "archive" ? (
           <>
@@ -706,19 +726,23 @@ function ExplorerContextMenu({
               <input type="hidden" name="noteId" value={menu.note.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore</MenuSubmit>
             </form>
-            <form
-              action={deleteNoteForeverAction}
-              onSubmit={(event) => {
-                if (!window.confirm("Delete this note forever? This cannot be undone.")) {
-                  event.preventDefault();
-                  return;
-                }
-                closeNoteLocally(menu.note.id, onClose);
+            <MenuSubmit
+              type="button"
+              danger
+              icon={<Trash2 size={14} />}
+              onClick={() => {
+                requestConfirm({
+                  title: "Delete note forever",
+                  message: "Delete this note forever? This cannot be undone.",
+                  confirmLabel: "Delete forever",
+                  action: deleteNoteForeverAction,
+                  fields: [{ name: "noteId", value: menu.note.id }],
+                  onConfirm: () => closeNoteLocally(menu.note.id, onClose)
+                });
               }}
             >
-              <input type="hidden" name="noteId" value={menu.note.id} />
-              <MenuSubmit danger icon={<Trash2 size={14} />}>Delete forever</MenuSubmit>
-            </form>
+              Delete forever
+            </MenuSubmit>
           </>
         ) : (
           <>
@@ -794,19 +818,23 @@ function ExplorerContextMenu({
               <input type="hidden" name="folderId" value={menu.folder.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore folder</MenuSubmit>
             </form>
-            <form
-              action={deleteFolderForeverAction}
-              onSubmit={(event) => {
-                if (!window.confirm("Delete this folder forever? Notes inside it will also be deleted.")) {
-                  event.preventDefault();
-                  return;
-                }
-                onClose();
+            <MenuSubmit
+              type="button"
+              danger
+              icon={<Trash2 size={14} />}
+              onClick={() => {
+                requestConfirm({
+                  title: "Delete folder forever",
+                  message: "Delete this folder forever? Notes inside it will also be deleted.",
+                  confirmLabel: "Delete forever",
+                  action: deleteFolderForeverAction,
+                  fields: [{ name: "folderId", value: menu.folder.id }],
+                  onConfirm: onClose
+                });
               }}
             >
-              <input type="hidden" name="folderId" value={menu.folder.id} />
-              <MenuSubmit danger icon={<Trash2 size={14} />}>Delete folder forever</MenuSubmit>
-            </form>
+              Delete folder forever
+            </MenuSubmit>
           </>
         ) : (
           <>
@@ -851,7 +879,15 @@ function closeNoteLocally(noteId: string, onClose: () => void) {
   onClose();
 }
 
-function TagContextMenu({ tag, onClose }: { tag: TagSummary; onClose: () => void }) {
+function TagContextMenu({
+  tag,
+  requestConfirm,
+  onClose
+}: {
+  tag: TagSummary;
+  requestConfirm: (confirmAction: ConfirmActionState) => void;
+  onClose: () => void;
+}) {
   const [renaming, setRenaming] = useState(false);
   const [editingColor, setEditingColor] = useState(false);
 
@@ -880,19 +916,23 @@ function TagContextMenu({ tag, onClose }: { tag: TagSummary; onClose: () => void
       ) : (
         <MenuButton onClick={() => setEditingColor(true)}>Change color</MenuButton>
       )}
-      <form
-        action={removeTagFromAllNotesAction}
-        onSubmit={(event) => {
-          if (!window.confirm(`Remove "${tag.name}" from all notes?`)) {
-            event.preventDefault();
-            return;
-          }
-          onClose();
+      <MenuSubmit
+        type="button"
+        danger
+        icon={<Trash2 size={14} />}
+        onClick={() => {
+          requestConfirm({
+            title: "Remove tag from notes",
+            message: `Remove "${tag.name}" from all notes?`,
+            confirmLabel: "Remove from all notes",
+            action: removeTagFromAllNotesAction,
+            fields: [{ name: "tagId", value: tag.id }],
+            onConfirm: onClose
+          });
         }}
       >
-        <input type="hidden" name="tagId" value={tag.id} />
-        <MenuSubmit danger icon={<Trash2 size={14} />}>Remove all applied notes</MenuSubmit>
-      </form>
+        Remove all applied notes
+      </MenuSubmit>
     </>
   );
 }
@@ -1090,12 +1130,84 @@ function DeleteTagDialog({ tag, onClose }: { tag: TagSummary; onClose: () => voi
   );
 }
 
+function ConfirmActionDialog({
+  confirmAction,
+  onClose
+}: {
+  confirmAction: ConfirmActionState;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-action-title"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <div className="w-full max-w-sm rounded-md border border-border bg-panel-strong p-4 shadow-2xl">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-400">
+            <Trash2 size={16} />
+          </span>
+          <div className="min-w-0">
+            <h2 id="confirm-action-title" className="text-sm font-semibold text-foreground">
+              {confirmAction.title}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">{confirmAction.message}</p>
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="h-8 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted"
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+          <form
+            action={confirmAction.action}
+            onSubmit={() => {
+              confirmAction.onConfirm?.();
+              onClose();
+            }}
+          >
+            {confirmAction.fields.map((field) => (
+              <input key={field.name} type="hidden" name={field.name} value={field.value} />
+            ))}
+            <button className="h-8 rounded-md bg-red-500 px-3 text-xs font-semibold text-white hover:bg-red-600">
+              {confirmAction.confirmLabel}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LifecycleNavigation({
   activeView,
-  hasTrashItems
+  hasTrashItems,
+  requestConfirm
 }: {
   activeView: "active" | "archive" | "trash";
   hasTrashItems: boolean;
+  requestConfirm: (confirmAction: ConfirmActionState) => void;
 }) {
   return (
     <div className="space-y-2">
@@ -1105,19 +1217,22 @@ function LifecycleNavigation({
         <LifecycleLink href="/trash" label="Trash" active={activeView === "trash"} icon={<Trash2 size={13} />} />
       </div>
       {activeView === "trash" && hasTrashItems ? (
-        <form
-          action={deleteAllTrashAction}
-          onSubmit={(event) => {
-            if (!window.confirm("Delete all Trash items forever? This cannot be undone.")) {
-              event.preventDefault();
-            }
+        <button
+          type="button"
+          className="flex h-8 w-full items-center justify-center gap-2 rounded-md border border-red-500/40 text-xs font-medium text-red-400 hover:bg-red-500/10"
+          onClick={() => {
+            requestConfirm({
+              title: "Delete all Trash",
+              message: "Delete all Trash items forever? This cannot be undone.",
+              confirmLabel: "Delete all",
+              action: deleteAllTrashAction,
+              fields: []
+            });
           }}
         >
-          <button className="flex h-8 w-full items-center justify-center gap-2 rounded-md border border-red-500/40 text-xs font-medium text-red-400 hover:bg-red-500/10">
-            <Trash2 size={13} />
-            Delete all Trash
-          </button>
-        </form>
+          <Trash2 size={13} />
+          Delete all Trash
+        </button>
       ) : null}
     </div>
   );
@@ -1302,14 +1417,20 @@ function MenuButton({
 function MenuSubmit({
   children,
   icon,
-  danger
+  danger,
+  type,
+  onClick
 }: {
   children: ReactNode;
   icon?: ReactNode;
   danger?: boolean;
+  type?: "button" | "submit";
+  onClick?: () => void;
 }) {
   return (
     <button
+      type={type}
+      onClick={onClick}
       className={
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-muted-foreground hover:bg-muted hover:text-foreground " +
         (danger ? "text-red-400" : "")
