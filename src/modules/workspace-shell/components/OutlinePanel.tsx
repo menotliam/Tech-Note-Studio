@@ -38,9 +38,9 @@ export function OutlinePanel({ items }: { items: OutlineItem[] }) {
       className="w-56"
       style={{ transform: `translate(${position.x}px, ${position.y}px)` }}
     >
-      <div className="rounded-md border border-border bg-background/90 shadow-2xl shadow-black/20 backdrop-blur">
+      <div className="overflow-hidden rounded-md border border-border bg-panel-strong/95 shadow-2xl shadow-black/25 backdrop-blur">
         <div
-          className="flex h-9 cursor-move select-none items-center gap-2 border-b border-border px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+          className="flex h-9 cursor-move select-none items-center gap-2 border-b border-border bg-muted/35 px-3 text-xs font-semibold uppercase text-muted-foreground"
           onPointerDown={(event) => {
             event.currentTarget.setPointerCapture(event.pointerId);
             setDragOffset({
@@ -74,6 +74,9 @@ export function OutlinePanel({ items }: { items: OutlineItem[] }) {
         >
           <ListTree size={14} />
           <span className="min-w-0 flex-1">Outline</span>
+          <span className="rounded bg-background px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+            {items.length}
+          </span>
           <button
             type="button"
             className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -93,7 +96,7 @@ export function OutlinePanel({ items }: { items: OutlineItem[] }) {
                   <button
                     type="button"
                     key={item.id}
-                    className="block w-full truncate rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                    className="block w-full truncate rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-muted hover:text-foreground"
                     style={{ paddingLeft: `${8 + (item.level - 1) * 12}px` }}
                     title={item.text}
                     onClick={() => {

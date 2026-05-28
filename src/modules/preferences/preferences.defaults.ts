@@ -2,6 +2,7 @@ import type { UserPreferences } from "./preferences.types";
 import { defaultEditorKeybindings } from "@/modules/keybindings/keybindings.defaults";
 
 export const themePreferenceValues = ["light", "dark", "system"] as const;
+export const reducedMotionPreferenceValues = ["system", "on", "off"] as const;
 export const accentPresetValues = ["cyan", "blue", "violet", "emerald", "amber", "rose"] as const;
 export const gradientPresetValues = ["cyan-purple", "blue-emerald", "violet-rose", "amber-rose"] as const;
 export const dashboardDensityValues = ["compact", "comfortable", "spacious"] as const;
@@ -17,6 +18,7 @@ export const codeThemeValues = ["default-dark-aware", "github-dark", "github-lig
 export const defaultUserPreferences: UserPreferences = {
   appearance: {
     theme: "system",
+    reducedMotion: "system",
     accentPreset: "cyan",
     gradientPreset: "cyan-purple"
   },

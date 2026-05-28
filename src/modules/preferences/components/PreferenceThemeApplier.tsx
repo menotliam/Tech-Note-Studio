@@ -7,12 +7,18 @@ import {
   darkModeMediaQuery,
   persistThemePreference
 } from "@/modules/preferences/preferences.theme";
+import {
+  applyReducedMotionAttribute,
+  persistReducedMotionPreference,
+  reducedMotionMediaQuery
+} from "@/modules/motion/use-reduced-motion-preference";
 import type { UserPreferences } from "@/modules/preferences/preferences.types";
 
 export function PreferenceThemeApplier({ preferences }: { preferences: UserPreferences }) {
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const mediaQuery = window.matchMedia(darkModeMediaQuery);
+    const themeMediaQuery = window.matchMedia(darkModeMediaQuery);
+    const motionMediaQuery = window.matchMedia(reducedMotionMediaQuery);
     const accent = getAccentPresetDefinition(preferences.appearance.accentPreset);
     const gradient = getGradientPresetDefinition(preferences.appearance.gradientPreset);
 
@@ -26,14 +32,24 @@ export function PreferenceThemeApplier({ preferences }: { preferences: UserPrefe
     );
 
     const applyTheme = () => {
-      applyThemeClass(preferences.appearance.theme, mediaQuery.matches);
+      applyThemeClass(preferences.appearance.theme, themeMediaQuery.matches);
+    };
+
+    const applyMotion = () => {
+      applyReducedMotionAttribute(preferences.appearance.reducedMotion, motionMediaQuery.matches);
     };
 
     persistThemePreference(preferences.appearance.theme);
+    persistReducedMotionPreference(preferences.appearance.reducedMotion);
     applyTheme();
-    mediaQuery.addEventListener("change", applyTheme);
+    applyMotion();
+    themeMediaQuery.addEventListener("change", applyTheme);
+    motionMediaQuery.addEventListener("change", applyMotion);
 
-    return () => mediaQuery.removeEventListener("change", applyTheme);
+    return () => {
+      themeMediaQuery.removeEventListener("change", applyTheme);
+      motionMediaQuery.removeEventListener("change", applyMotion);
+    };
   }, [preferences]);
 
   return null;

@@ -8,6 +8,8 @@ import {
   updateNoteAction
 } from "@/modules/notes/note.actions";
 import type { NoteDetail } from "@/modules/notes/note.types";
+import { notificationCopy } from "@/modules/notifications/notification-copy";
+import { NotificationSubmitButton } from "@/modules/notifications/components/NotificationSubmitButton";
 import type { FolderSummary, TagSummary } from "@/modules/organization/organization.types";
 import { NetworkStatusIndicator } from "@/modules/offline-sync/components/NetworkStatusIndicator";
 import type { UserPreferences } from "@/modules/preferences/preferences.types";
@@ -120,9 +122,12 @@ export function NoteEditorShell({
               </span>
               <form action={deleteNoteAction}>
                 <input type="hidden" name="noteId" value={note.id} />
-                <button className="block w-full rounded-md px-2 py-1.5 text-left text-sm text-red-400 hover:bg-muted">
+                <NotificationSubmitButton
+                  className="block w-full rounded-md px-2 py-1.5 text-left text-sm text-red-400 hover:bg-muted"
+                  intent={notificationCopy.lifecycleMovedToTrash(note.title)}
+                >
                   Delete
-                </button>
+                </NotificationSubmitButton>
               </form>
             </div>
           </EditorHeaderMenu>
@@ -144,7 +149,7 @@ export function NoteEditorShell({
               <OutlinePanel items={outlineItems} />
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto" data-editor-scroll-container>
             <div className="relative min-h-full">
               <RichNoteEditor
                 key={`${note.id}:${note.updatedAt}`}

@@ -10,11 +10,10 @@ import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
 import { ActivityBar } from "@/modules/workspace-shell/components/ActivityBar";
 import { ExplorerPanel } from "@/modules/workspace-shell/components/ExplorerPanel";
 import type { WorkspaceActivity } from "@/modules/workspace-shell/workspace-shell.types";
+import { readLocalLayoutPreferences, writeLocalLayoutPreference } from "@/modules/layout/layout-local-storage";
+import { clampPanelWidth, panelWidthLimits } from "@/modules/layout/panel-sizing";
 
-const DEFAULT_EXPLORER_WIDTH = 300;
-const MIN_EXPLORER_WIDTH = 220;
-const MAX_EXPLORER_WIDTH = 420;
-const EXPLORER_WIDTH_STORAGE_KEY = "technote.explorer.width";
+const DEFAULT_EXPLORER_WIDTH: number = panelWidthLimits.explorerWidth.defaultValue;
 
 export function WorkspaceGridShell({
   preferences,
@@ -47,14 +46,14 @@ export function WorkspaceGridShell({
   workspaceView: "active" | "archive" | "trash";
   children: ReactNode;
 }) {
-  const [explorerWidth, setExplorerWidth] = useState(DEFAULT_EXPLORER_WIDTH);
+  const [explorerWidth, setExplorerWidth] = useState<number>(DEFAULT_EXPLORER_WIDTH);
+  const [isResizingExplorer, setIsResizingExplorer] = useState(false);
 
   useEffect(() => {
-    const storedValue = window.localStorage.getItem(EXPLORER_WIDTH_STORAGE_KEY);
-    const storedWidth = storedValue === null ? Number.NaN : Number(storedValue);
+    const layoutPreferences = readLocalLayoutPreferences();
 
-    if (Number.isFinite(storedWidth)) {
-      setExplorerWidth(clampExplorerWidth(storedWidth));
+    if (typeof layoutPreferences.explorerWidth === "number") {
+      setExplorerWidth(layoutPreferences.explorerWidth);
     }
   }, []);
 
@@ -66,9 +65,9 @@ export function WorkspaceGridShell({
     const startWidth = explorerWidth;
 
     function handlePointerMove(moveEvent: PointerEvent) {
-      const nextWidth = clampExplorerWidth(startWidth + moveEvent.clientX - startX);
+      const nextWidth = clampPanelWidth("explorerWidth", startWidth + moveEvent.clientX - startX);
       setExplorerWidth(nextWidth);
-      window.localStorage.setItem(EXPLORER_WIDTH_STORAGE_KEY, String(nextWidth));
+      writeLocalLayoutPreference("explorerWidth", nextWidth);
     }
 
     function stopResize() {
@@ -76,8 +75,10 @@ export function WorkspaceGridShell({
       window.removeEventListener("pointerup", stopResize);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      setIsResizingExplorer(false);
     }
 
+    setIsResizingExplorer(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     window.addEventListener("pointermove", handlePointerMove);
@@ -86,7 +87,7 @@ export function WorkspaceGridShell({
 
   function resetExplorerWidth() {
     setExplorerWidth(DEFAULT_EXPLORER_WIDTH);
-    window.localStorage.removeItem(EXPLORER_WIDTH_STORAGE_KEY);
+    writeLocalLayoutPreference("explorerWidth", DEFAULT_EXPLORER_WIDTH);
   }
 
   return (
@@ -95,6 +96,7 @@ export function WorkspaceGridShell({
       data-sidebar-collapsed={String(preferences.dashboard.sidebarCollapsed)}
       data-active-activity={initialActivity}
       data-focus-mode={String(preferences.dashboard.focusModeEnabled)}
+      data-explorer-resizing={String(isResizingExplorer)}
       className="relative grid h-screen min-h-0 grid-cols-1 overflow-hidden lg:grid-cols-[56px_var(--explorer-width)_minmax(0,1fr)]"
       style={{ "--explorer-width": `${explorerWidth}px` } as CSSProperties}
     >
@@ -119,7 +121,12 @@ export function WorkspaceGridShell({
       <button
         type="button"
         data-explorer-resize-handle
-        className="absolute bottom-0 top-0 z-40 hidden w-2 cursor-col-resize border-x border-transparent transition hover:border-primary/35 hover:bg-primary/10 lg:block"
+        className={
+          "absolute bottom-0 top-0 z-40 hidden w-2 cursor-col-resize border-x transition lg:block " +
+          (isResizingExplorer
+            ? "border-primary/45 bg-primary/15"
+            : "border-transparent hover:border-primary/35 hover:bg-primary/10")
+        }
         style={{ left: `calc(56px + ${explorerWidth}px - 4px)` }}
         aria-label="Resize explorer"
         title="Drag to resize, double click to reset"
@@ -129,8 +136,4 @@ export function WorkspaceGridShell({
       {children}
     </div>
   );
-}
-
-function clampExplorerWidth(width: number) {
-  return Math.min(MAX_EXPLORER_WIDTH, Math.max(MIN_EXPLORER_WIDTH, Math.round(width)));
 }

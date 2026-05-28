@@ -13,6 +13,7 @@ import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
 import { EditorTabStrip } from "@/modules/workspace-shell/components/EditorTabStrip";
 import type { WorkspaceActivity } from "@/modules/workspace-shell/workspace-shell.types";
 import { extractOutlineItems } from "@/modules/workspace-shell/workspace-shell.utils";
+import { EmptyState } from "@/components/ui/empty-state";
 import { WorkspaceGridShell } from "./WorkspaceGridShell";
 
 export function DashboardShell({
@@ -110,11 +111,15 @@ export function DashboardShell({
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center px-8">
-              <div className="max-w-md text-center">
-                <div className="mx-auto mb-5 h-12 w-12 rounded-md border border-border bg-[image:var(--accent-gradient)]" />
-                <h2 className="text-2xl font-semibold">{getEmptyEditorTitle(workspaceView)}</h2>
+              <div className="w-full max-w-md">
+                <EmptyState
+                  icon={<FilePlus2 size={28} />}
+                  title={getEmptyEditorTitle(workspaceView)}
+                  description={getEmptyEditorDescription(workspaceView)}
+                  className="border-border bg-panel/70"
+                />
                 {workspaceView === "active" ? (
-                  <form action={createBlankNoteAction} className="mt-6">
+                  <form action={createBlankNoteAction} className="mt-4 flex justify-center">
                     <button
                       className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground"
                       aria-label="Create note"
@@ -143,4 +148,16 @@ function getEmptyEditorTitle(workspaceView: "active" | "archive" | "trash") {
   }
 
   return "Select or create a note";
+}
+
+function getEmptyEditorDescription(workspaceView: "active" | "archive" | "trash") {
+  if (workspaceView === "archive") {
+    return "Archived notes appear here when selected from the Explorer.";
+  }
+
+  if (workspaceView === "trash") {
+    return "Trashed notes can be reviewed or restored from the Explorer.";
+  }
+
+  return "Pick a note from the Explorer or create a fresh technical note.";
 }

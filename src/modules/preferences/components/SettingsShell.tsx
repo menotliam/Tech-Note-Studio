@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ChangeEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Check, Keyboard, Monitor, Moon, RotateCcw, Sun } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Keyboard, Loader2, Monitor, Moon, RotateCcw, Sun } from "lucide-react";
 import { defaultEditorKeybindings } from "@/modules/keybindings/keybindings.defaults";
 import { isSafeShortcut, normalizeKeyboardEvent } from "@/modules/keybindings/keybindings.normalize";
 import { normalizeKeybindingPreferences, validateKeybindingPreferences } from "@/modules/keybindings/keybindings.schemas";
@@ -15,7 +15,8 @@ import {
   editorFontFamilyValues,
   editorFontSizeValues,
   editorLineHeightValues,
-  editorWidthValues
+  editorWidthValues,
+  reducedMotionPreferenceValues
 } from "@/modules/preferences/preferences.defaults";
 import type { UserPreferences, UserPreferencesPatch } from "@/modules/preferences/preferences.types";
 import {
@@ -24,6 +25,8 @@ import {
   gradientPresetDefinitions
 } from "@/modules/preferences/preferences.ui";
 import { syncThemePreference } from "@/modules/preferences/preferences.theme";
+import { notificationCopy } from "@/modules/notifications/notification-copy";
+import { notify } from "@/modules/notifications/notification.service";
 import { updateWorkspacePersonalizationAction } from "@/modules/workspace/workspace.actions";
 import { workspaceIconValues } from "@/modules/workspace/workspace.schemas";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
@@ -87,9 +90,11 @@ export function SettingsShell({
 
       setPreferences(payload.preferences);
       setStatus("saved");
+      notify(notificationCopy.preferencesSaved());
     } catch {
       setPreferences(preferences);
       setStatus("error");
+      notify(notificationCopy.preferencesFailed());
     }
   }
 
@@ -198,9 +203,11 @@ function WorkspaceSettings({
       const savedWorkspace = await updateWorkspacePersonalizationAction(formData);
       setWorkspace(savedWorkspace);
       setStatus("saved");
+      notify(notificationCopy.workspaceSaved());
     } catch {
       setWorkspace(previousWorkspace);
       setStatus("error");
+      notify(notificationCopy.workspaceFailed());
     }
   }
 
@@ -302,6 +309,19 @@ function AppearanceSettings({
         </div>
       </SettingsPanel>
 
+      <SettingsPanel title="Motion">
+        <div className="grid grid-cols-3 gap-2">
+          {reducedMotionPreferenceValues.map((value) => (
+            <MotionButton
+              key={value}
+              label={formatOption(value)}
+              active={preferences.appearance.reducedMotion === value}
+              onClick={() => updatePreferences({ appearance: { reducedMotion: value } })}
+            />
+          ))}
+        </div>
+      </SettingsPanel>
+
       <SettingsPanel title="Accent">
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
           {accentPresetDefinitions.map((preset) => (
@@ -342,6 +362,31 @@ function AppearanceSettings({
         </div>
       </SettingsPanel>
     </div>
+  );
+}
+
+function MotionButton({
+  label,
+  active,
+  onClick
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={
+        "flex h-10 items-center justify-center rounded-md border text-sm transition " +
+        (active
+          ? "border-primary bg-muted font-medium text-foreground"
+          : "border-border text-muted-foreground hover:border-primary hover:text-foreground")
+      }
+      onClick={onClick}
+    >
+      {label}
+    </button>
   );
 }
 
@@ -735,12 +780,24 @@ function ToggleField({
 
 function SaveStatus({ status }: { status: SaveStatusValue }) {
   if (status === "idle") {
-    return null;
+    return (
+      <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted-foreground">
+        Ready
+      </div>
+    );
   }
 
   return (
-    <div className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted-foreground">
+    <div
+      className={
+        "inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm " +
+        (status === "error" ? "border-red-500/40 text-red-300" : "border-border text-muted-foreground")
+      }
+      aria-live="polite"
+    >
+      {status === "saving" ? <Loader2 size={15} className="animate-spin text-primary" /> : null}
       {status === "saved" ? <Check size={15} className="text-primary" /> : null}
+      {status === "error" ? <AlertCircle size={15} /> : null}
       {status === "saving" ? "Saving" : status === "saved" ? "Saved" : "Could not save"}
     </div>
   );

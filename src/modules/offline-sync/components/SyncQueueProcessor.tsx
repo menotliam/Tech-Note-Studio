@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
 import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
+import { notificationCopy } from "@/modules/notifications/notification-copy";
+import { notify } from "@/modules/notifications/notification.service";
 import {
   deleteSyncOperation,
   enqueueSyncOperation,
@@ -31,6 +33,7 @@ export function SyncQueueProcessor() {
       void processSyncQueue()
         .catch(() => {
           publishNetworkStatus(false);
+          notify(notificationCopy.syncFailed());
           // Sync is best-effort; queued operations stay in IndexedDB for the next online pass.
         })
         .finally(() => {
@@ -85,6 +88,7 @@ async function processSyncQueue() {
 
     if (error) {
       publishNetworkStatus(false);
+      notify(notificationCopy.syncFailed());
       await enqueueSyncOperation({
         ...operation,
         retryCount: operation.retryCount + 1,

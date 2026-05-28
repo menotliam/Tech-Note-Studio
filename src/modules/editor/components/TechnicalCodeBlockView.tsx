@@ -47,6 +47,9 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
   const showLineNumbers = attrs.showLineNumbers !== false;
   const wordWrap = attrs.wordWrap === true;
   const codeText = node.textContent;
+  const lineNumbers = codeText.split("\n").map((_, index) => index + 1);
+  const codePaddingClass = showLineNumbers ? "py-4 pl-14 pr-4" : "p-4";
+  const codeWhitespaceClass = wordWrap ? "whitespace-pre-wrap break-words" : "whitespace-pre";
   const languageAccent = getLanguageAccent(language);
   const accentStyle = {
     "--code-language-accent": languageAccent.accent,
@@ -119,7 +122,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
   return (
     <NodeViewWrapper
       ref={codeBlockRef}
-      className="technical-code-block rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] shadow-lg shadow-black/10"
+      className="technical-code-block overflow-hidden rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] shadow-xl shadow-black/15"
       data-language-family={languageAccent.family}
       style={accentStyle}
     >
@@ -130,7 +133,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
         <div className="flex items-center gap-2" contentEditable={false}>
           <Braces size={16} className="technical-code-block-icon" />
           <select
-            className="technical-code-language-select rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] px-2 py-1 text-sm text-[hsl(var(--code-block-foreground))]"
+            className="technical-code-language-select h-8 rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] px-2 text-sm text-[hsl(var(--code-block-foreground))] outline-none transition"
             value={language}
             onChange={(event) =>
               updateAttributes({
@@ -148,7 +151,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
             ))}
           </select>
           <span
-            className="rounded bg-[hsl(var(--code-block-background))] px-2 py-1 text-xs text-[hsl(var(--code-block-muted))]"
+            className="rounded border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] px-2 py-1 text-xs text-[hsl(var(--code-block-muted))]"
             contentEditable={false}
           >
             {attrs.source === "manual" ? "manual" : `${Math.round((attrs.confidence ?? 1) * 100)}%`}
@@ -158,7 +161,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
         <div className="flex items-center gap-1" contentEditable={false}>
           <button
             type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[hsl(var(--code-block-muted))] hover:bg-[hsl(var(--code-block-background))] hover:text-[hsl(var(--code-block-foreground))]"
+            className={`${codeToolbarButtonChromeClass} text-[hsl(var(--code-block-muted))]`}
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(node.textContent);
@@ -176,7 +179,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
           <button
             type="button"
             className={
-              "inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-[hsl(var(--code-block-background))] " +
+              codeToolbarButtonChromeClass + " " +
               (showLineNumbers ? "text-[color:var(--code-language-accent)]" : "text-[hsl(var(--code-block-muted))]")
             }
             onClick={() => updateAttributes({ showLineNumbers: !showLineNumbers })}
@@ -188,7 +191,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
           <button
             type="button"
             className={
-              "inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-[hsl(var(--code-block-background))] " +
+              codeToolbarButtonChromeClass + " " +
               (wordWrap ? "text-[color:var(--code-language-accent)]" : "text-[hsl(var(--code-block-muted))]")
             }
             onClick={() => updateAttributes({ wordWrap: !wordWrap })}
@@ -199,7 +202,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
           </button>
           <button
             type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[hsl(var(--code-block-muted))] hover:bg-[hsl(var(--code-block-background))] hover:text-[hsl(var(--code-block-foreground))]"
+            className={`${codeToolbarButtonChromeClass} text-[hsl(var(--code-block-muted))]`}
             onClick={() => setCollapsed((value) => !value)}
             title={collapsed ? "Expand code block" : "Collapse code block"}
             aria-label={collapsed ? "Expand code block" : "Collapse code block"}
@@ -208,7 +211,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
           </button>
           <button
             type="button"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[hsl(var(--code-block-muted))] hover:bg-red-500/10 hover:text-red-500"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-[hsl(var(--code-block-muted))] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--code-language-accent)] hover:bg-red-500/10 hover:text-red-500"
             onClick={deleteNode}
             title="Delete code block"
             aria-label="Delete code block"
@@ -224,21 +227,36 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
         </div>
       ) : (
         <div className="relative min-h-14 overflow-x-auto">
+          {showLineNumbers ? (
+            <div
+              aria-hidden
+              contentEditable={false}
+              className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 select-none border-r border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))]/90 py-4 pr-2 text-right font-mono text-sm leading-6 text-[hsl(var(--code-block-muted))]"
+            >
+              {lineNumbers.map((lineNumber) => (
+                <span key={lineNumber} className="block h-6 tabular-nums">
+                  {lineNumber}
+                </span>
+              ))}
+            </div>
+          ) : null}
           {highlightedHtml ? (
             <div
               aria-hidden
               contentEditable={false}
               className={
-                "technical-code-block-highlight pointer-events-none absolute inset-0 border-0 bg-transparent p-4 font-mono text-sm leading-6 text-[hsl(var(--code-block-foreground))] " +
-                (wordWrap ? "whitespace-pre-wrap" : "whitespace-pre")
+                "technical-code-block-highlight pointer-events-none absolute inset-0 border-0 bg-transparent font-mono text-sm leading-6 text-[hsl(var(--code-block-foreground))] " +
+                codePaddingClass + " " +
+                codeWhitespaceClass
               }
               dangerouslySetInnerHTML={{ __html: highlightedHtml }}
             />
           ) : null}
           <div
             className={
-              "m-0 min-h-14 border-0 bg-transparent p-4 font-mono text-sm leading-6 text-[hsl(var(--code-block-foreground))] " +
-              (wordWrap ? "whitespace-pre-wrap" : "whitespace-pre")
+              "m-0 min-h-14 border-0 bg-transparent font-mono text-sm leading-6 text-[hsl(var(--code-block-foreground))] " +
+              codePaddingClass + " " +
+              codeWhitespaceClass
             }
             data-line-numbers={String(showLineNumbers)}
           >
@@ -252,6 +270,9 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
     </NodeViewWrapper>
   );
 }
+
+const codeToolbarButtonChromeClass =
+  "inline-flex h-8 w-8 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--code-language-accent)] hover:bg-[hsl(var(--code-block-background))] hover:text-[hsl(var(--code-block-foreground))]";
 
 function formatLanguage(value: string) {
   const labels: Record<string, string> = {

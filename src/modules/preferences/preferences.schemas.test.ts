@@ -18,6 +18,16 @@ describe("preferences schemas", () => {
     }
   });
 
+  it("accepts v0.3 reduced motion preference values", () => {
+    for (const reducedMotion of ["system", "on", "off"]) {
+      const result = userPreferencesPatchSchema.safeParse({
+        appearance: { reducedMotion }
+      });
+
+      expect(result.success).toBe(true);
+    }
+  });
+
   it("rejects invalid theme and accent values", () => {
     expect(
       userPreferencesPatchSchema.safeParse({
@@ -53,6 +63,7 @@ describe("preferences schemas", () => {
     });
 
     expect(preferences.appearance.theme).toBe("dark");
+    expect(preferences.appearance.reducedMotion).toBe(defaultUserPreferences.appearance.reducedMotion);
     expect(preferences.appearance.accentPreset).toBe(defaultUserPreferences.appearance.accentPreset);
     expect(preferences.dashboard).toEqual(defaultUserPreferences.dashboard);
     expect(preferences.editor.width).toBe("wide");

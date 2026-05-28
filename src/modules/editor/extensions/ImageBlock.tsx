@@ -57,12 +57,14 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
   };
   const width = getPixelWidth(attrs.width);
   const noteId = (extension.options as ImageBlockOptions).noteId;
+  const wrapperRef = useRef<HTMLSpanElement | null>(null);
   const contentRef = useRef<HTMLSpanElement | null>(null);
   const [resizingCorner, setResizingCorner] = useState<ResizeCorner | null>(null);
 
   return (
     <NodeViewWrapper
       as="span"
+      ref={wrapperRef}
       className="group relative !my-2 inline-flex max-w-full flex-col gap-2 align-bottom leading-none"
       style={{ width: `${width}px` }}
       data-image-block
@@ -71,8 +73,8 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
       <span
         ref={contentRef}
         className={
-          "relative block w-full rounded-md bg-panel p-2 transition " +
-          (selected ? " ring-2 ring-primary" : "")
+          "relative block w-full rounded-md border bg-panel p-2 shadow-lg shadow-black/10 transition " +
+          (selected ? "border-primary ring-2 ring-primary/35" : "border-border")
         }
       >
         <img
@@ -81,11 +83,16 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
           draggable={false}
           className="block max-h-[70vh] w-full rounded object-contain"
         />
-        <div className="absolute right-2 top-2 hidden flex-wrap items-center gap-1 rounded-md border border-border bg-background/95 p-1 shadow-xl backdrop-blur group-hover:flex">
+        <div
+          className={
+            (selected ? "flex " : "hidden group-hover:flex ") +
+            "absolute right-2 top-2 flex-wrap items-center gap-1 rounded-md border border-border bg-background/95 p-1 shadow-xl backdrop-blur"
+          }
+        >
           <button
             type="button"
             draggable
-            className="inline-flex h-7 w-7 cursor-grab items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+            className="inline-flex h-7 w-7 cursor-grab items-center justify-center rounded text-muted-foreground transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-muted hover:text-foreground active:cursor-grabbing"
             title="Move image"
             aria-label="Move image"
             onDragStart={(event) => {
@@ -98,7 +105,7 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
           >
             <GripVertical size={14} />
           </button>
-          <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground" title="Replace image">
+          <label className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded text-muted-foreground transition focus-within:ring-2 focus-within:ring-primary hover:bg-muted hover:text-foreground" title="Replace image">
             <ImagePlus size={14} />
             <input
               type="file"
@@ -116,7 +123,7 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
           </label>
         </div>
         <input
-          className="mt-2 w-full rounded border border-transparent bg-transparent px-2 py-1 text-center text-sm text-muted-foreground outline-none transition placeholder:text-muted-foreground/70 hover:border-border focus:border-primary"
+          className="mt-2 w-full rounded border border-transparent bg-background/40 px-2 py-1 text-center text-sm text-muted-foreground outline-none transition placeholder:text-muted-foreground/70 hover:border-border focus:border-primary"
           value={attrs.caption ?? ""}
           placeholder={attrs.title || "Add caption..."}
           onChange={(event) => updateAttributes({ caption: event.target.value })}
@@ -135,7 +142,7 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
             startResize({
               event,
               corner,
-              wrapper: contentRef.current,
+              wrapper: wrapperRef.current,
               initialWidth: width,
               updateAttributes,
               setResizingCorner
@@ -207,21 +214,59 @@ function startResize({
   const editorWidth = wrapper?.closest(".ProseMirror")?.getBoundingClientRect().width ?? 960;
   const maxWidth = Math.max(160, Math.floor(editorWidth));
   const direction = corner.endsWith("left") ? -1 : 1;
+  let nextWidth = initialWidth;
+  let animationFrame: number | null = null;
+
+  function previewWidth(width: number) {
+    if (!wrapper) {
+      return;
+    }
+
+    if (animationFrame !== null) {
+      window.cancelAnimationFrame(animationFrame);
+    }
+
+    animationFrame = window.requestAnimationFrame(() => {
+      wrapper.style.width = `${width}px`;
+      animationFrame = null;
+    });
+  }
 
   function handlePointerMove(moveEvent: globalThis.PointerEvent) {
     const deltaX = (moveEvent.clientX - startX) * direction;
-    const nextWidth = Math.round(Math.min(Math.max(initialWidth + deltaX, 160), maxWidth));
-    updateAttributes({ width: nextWidth });
+    nextWidth = Math.round(Math.min(Math.max(initialWidth + deltaX, 160), maxWidth));
+    previewWidth(nextWidth);
   }
 
-  function handlePointerUp() {
+  function finishResize() {
+    if (animationFrame !== null) {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = null;
+    }
+
+    if (wrapper) {
+      wrapper.style.width = `${nextWidth}px`;
+    }
+
+    updateAttributes({ width: nextWidth });
     setResizingCorner(null);
     window.removeEventListener("pointermove", handlePointerMove);
     window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerCancel);
+  }
+
+  function handlePointerUp() {
+    finishResize();
+  }
+
+  function handlePointerCancel() {
+    nextWidth = initialWidth;
+    finishResize();
   }
 
   window.addEventListener("pointermove", handlePointerMove);
   window.addEventListener("pointerup", handlePointerUp, { once: true });
+  window.addEventListener("pointercancel", handlePointerCancel, { once: true });
 }
 
 function startImageDrag({

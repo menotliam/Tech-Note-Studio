@@ -21,6 +21,8 @@ import {
   X
 } from "lucide-react";
 import { MultiNoteExportForm } from "@/modules/export/components/MultiNoteExportForm";
+import { notificationCopy } from "@/modules/notifications/notification-copy";
+import { notify } from "@/modules/notifications/notification.service";
 import {
   archiveNoteAction,
   createBlankNoteAction,
@@ -58,6 +60,8 @@ import type { FolderSummary, TagSummary } from "@/modules/organization/organizat
 import { createNoteFromTemplateAction } from "@/modules/templates/template.actions";
 import type { TemplateSummary } from "@/modules/templates/template.types";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { removeOpenNoteTab } from "../open-tabs.client";
 import { buildFolderTree, getPrimaryTagColor, type FolderTreeNode } from "../workspace-shell.utils";
 
@@ -75,6 +79,15 @@ type ConfirmActionState = {
   fields: Array<{ name: string; value: string }>;
   onConfirm?: () => void;
 };
+
+type ExplorerDragItem =
+  | { type: "note"; id: string; label: string }
+  | { type: "folder"; id: string; label: string };
+
+type ExplorerDropTarget =
+  | { type: "root"; id: "root"; valid: boolean }
+  | { type: "folder"; id: string; label: string; valid: boolean }
+  | null;
 
 const tagColorPresets = [
   "#ef4444",
@@ -124,6 +137,8 @@ export function ExplorerPanel({
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [tagPendingDelete, setTagPendingDelete] = useState<TagSummary | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
+  const [dragItem, setDragItem] = useState<ExplorerDragItem | null>(null);
+  const [dropTarget, setDropTarget] = useState<ExplorerDropTarget>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const [, startTransition] = useTransition();
 
@@ -172,8 +187,38 @@ export function ExplorerPanel({
     });
   }
 
+  function hasExplorerDragPayload(event: ReactDragEvent) {
+    return (
+      event.dataTransfer.types.includes("application/x-technote-note") ||
+      event.dataTransfer.types.includes("application/x-technote-folder")
+    );
+  }
+
+  function markRootDropTarget(event: ReactDragEvent) {
+    if (workspaceView !== "active") {
+      return;
+    }
+
+    if (dragItem || hasExplorerDragPayload(event)) {
+      event.preventDefault();
+      if (dropTarget?.type !== "root" || !dropTarget.valid) {
+        setDropTarget({ type: "root", id: "root", valid: true });
+      }
+    }
+  }
+
+  function clearDropTarget() {
+    setDropTarget(null);
+  }
+
+  function clearDragState() {
+    setDragItem(null);
+    setDropTarget(null);
+  }
+
   function moveDroppedNoteToRoot(event: ReactDragEvent) {
     if (workspaceView !== "active") {
+      clearDropTarget();
       return;
     }
 
@@ -190,6 +235,8 @@ export function ExplorerPanel({
         moveFolderToParent(folderId, null);
       }
     }
+
+    clearDragState();
   }
 
   function collapseAllFolders() {
@@ -200,6 +247,7 @@ export function ExplorerPanel({
     <aside
       className="border-r border-border bg-panel text-sm"
       data-explorer-panel
+      data-dragging-explorer-item={dragItem ? "true" : "false"}
       onClick={() => setContextMenu(null)}
     >
       <div className="flex h-10 items-center justify-between border-b border-border px-3">
@@ -218,21 +266,23 @@ export function ExplorerPanel({
       <div className="h-[calc(100vh-40px)] overflow-y-auto px-2 py-3">
         <section
           data-activity-panel="explorer"
-          className="hidden min-h-full space-y-3"
-          onDragOver={(event) => {
-            if (workspaceView === "active") {
-              event.preventDefault();
+          className="relative hidden min-h-full space-y-3"
+          onDragOver={markRootDropTarget}
+          onDrop={moveDroppedNoteToRoot}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              clearDropTarget();
             }
           }}
-          onDrop={moveDroppedNoteToRoot}
         >
           <div
-            className="flex items-center gap-2 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-            onDragOver={(event) => {
-              if (workspaceView === "active") {
-                event.preventDefault();
-              }
-            }}
+            className={
+              "flex items-center gap-2 rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide transition " +
+              (dropTarget?.type === "root"
+                ? "bg-primary/10 text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.35)]"
+                : "text-muted-foreground")
+            }
+            onDragOver={markRootDropTarget}
             onDrop={moveDroppedNoteToRoot}
           >
             <Folder size={14} />
@@ -301,13 +351,17 @@ export function ExplorerPanel({
           ) : null}
 
           <div
-            className="min-h-20 space-y-0.5"
-            onDragOver={(event) => {
-              if (workspaceView === "active") {
-                event.preventDefault();
+            className={
+              "min-h-20 space-y-0.5 rounded-md transition " +
+              (dropTarget?.type === "root" ? "bg-primary/5" : "")
+            }
+            onDragOver={markRootDropTarget}
+            onDrop={moveDroppedNoteToRoot}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                clearDropTarget();
               }
             }}
-            onDrop={moveDroppedNoteToRoot}
           >
             {visibleTree.folders.map((folder) => (
               <FolderNode
@@ -321,6 +375,11 @@ export function ExplorerPanel({
                 setCollapsedFolders={setCollapsedFolders}
                 moveNoteToFolder={moveNoteToFolder}
                 moveFolderToParent={moveFolderToParent}
+                dragItem={dragItem}
+                dropTarget={dropTarget}
+                setDragItem={setDragItem}
+                setDropTarget={setDropTarget}
+                clearDragState={clearDragState}
                 openContextMenu={(event, targetFolder) => {
                   event.preventDefault();
                   setContextMenu({ type: "folder", folder: targetFolder, x: event.clientX, y: event.clientY });
@@ -338,6 +397,9 @@ export function ExplorerPanel({
                 tags={tags}
                 active={selectedNote?.id === note.id}
                 workspaceView={workspaceView}
+                dragItem={dragItem}
+                setDragItem={setDragItem}
+                clearDragState={clearDragState}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
@@ -345,6 +407,7 @@ export function ExplorerPanel({
               />
             ))}
           </div>
+          {dragItem ? <ExplorerDragGhost item={dragItem} dropTarget={dropTarget} /> : null}
         </section>
 
         <section data-activity-panel="search" className="hidden space-y-3">
@@ -511,6 +574,11 @@ function FolderNode({
   setCollapsedFolders,
   moveNoteToFolder,
   moveFolderToParent,
+  dragItem,
+  dropTarget,
+  setDragItem,
+  setDropTarget,
+  clearDragState,
   openContextMenu,
   openNoteContextMenu,
   depth = 0
@@ -524,11 +592,18 @@ function FolderNode({
   setCollapsedFolders: (value: Set<string>) => void;
   moveNoteToFolder: (noteId: string, folderId: string | null) => void;
   moveFolderToParent: (folderId: string, parentId: string | null) => void;
+  dragItem: ExplorerDragItem | null;
+  dropTarget: ExplorerDropTarget;
+  setDragItem: (item: ExplorerDragItem | null) => void;
+  setDropTarget: (target: ExplorerDropTarget) => void;
+  clearDragState: () => void;
   openContextMenu: (event: MouseEvent, folder: FolderTreeNode) => void;
   openNoteContextMenu: (event: MouseEvent, note: NoteSummary) => void;
   depth?: number;
 }) {
   const collapsed = collapsedFolders.has(folder.id);
+  const activeDropTarget = dropTarget?.type === "folder" && dropTarget.id === folder.id;
+  const invalidDropTarget = activeDropTarget && !dropTarget.valid;
 
   return (
     <div
@@ -540,14 +615,43 @@ function FolderNode({
         event.stopPropagation();
         event.dataTransfer.setData("application/x-technote-folder", folder.id);
         event.dataTransfer.effectAllowed = "move";
+        setDragItem({ type: "folder", id: folder.id, label: folder.name });
       }}
       onDragOver={(event) => {
-        if (workspaceView === "active") {
-          event.preventDefault();
+        if (workspaceView !== "active") {
+          return;
+        }
+
+        const noteId =
+          dragItem?.type === "note" ? dragItem.id : event.dataTransfer.getData("application/x-technote-note");
+        const movingFolderId =
+          dragItem?.type === "folder" ? dragItem.id : event.dataTransfer.getData("application/x-technote-folder");
+
+        if (!noteId && !movingFolderId) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const nextDropTarget: ExplorerDropTarget = {
+          type: "folder",
+          id: folder.id,
+          label: folder.name,
+          valid: Boolean(noteId) || (Boolean(movingFolderId) && movingFolderId !== folder.id)
+        };
+
+        if (
+          dropTarget?.type !== "folder" ||
+          dropTarget.id !== nextDropTarget.id ||
+          dropTarget.label !== nextDropTarget.label ||
+          dropTarget.valid !== nextDropTarget.valid
+        ) {
+          setDropTarget(nextDropTarget);
         }
       }}
       onDrop={(event) => {
         if (workspaceView !== "active") {
+          clearDragState();
           return;
         }
         const noteId = event.dataTransfer.getData("application/x-technote-note");
@@ -561,6 +665,13 @@ function FolderNode({
           event.preventDefault();
           event.stopPropagation();
           moveFolderToParent(movingFolderId, folder.id);
+        }
+        clearDragState();
+      }}
+      onDragEnd={clearDragState}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null) && activeDropTarget) {
+          setDropTarget(null);
         }
       }}
       onContextMenu={(event) => {
@@ -577,6 +688,8 @@ function FolderNode({
           detail={getFolderDetail(folder, workspaceView)}
           pinned={folder.isPinned}
           depth={depth}
+          dropState={activeDropTarget ? (invalidDropTarget ? "invalid" : "valid") : undefined}
+          dragging={dragItem?.type === "folder" && dragItem.id === folder.id}
         />
         <button
           type="button"
@@ -609,6 +722,11 @@ function FolderNode({
               setCollapsedFolders={setCollapsedFolders}
               moveNoteToFolder={moveNoteToFolder}
               moveFolderToParent={moveFolderToParent}
+              dragItem={dragItem}
+              dropTarget={dropTarget}
+              setDragItem={setDragItem}
+              setDropTarget={setDropTarget}
+              clearDragState={clearDragState}
               openContextMenu={openContextMenu}
               openNoteContextMenu={openNoteContextMenu}
               depth={depth + 1}
@@ -622,6 +740,9 @@ function FolderNode({
               active={selectedNoteId === note.id}
               workspaceView={workspaceView}
               depth={depth + 1}
+              dragItem={dragItem}
+              setDragItem={setDragItem}
+              clearDragState={clearDragState}
               onContextMenu={(event) => openNoteContextMenu(event, note)}
             />
           ))}
@@ -636,6 +757,9 @@ function NoteNode({
   tags,
   active,
   workspaceView,
+  dragItem = null,
+  setDragItem,
+  clearDragState,
   onContextMenu,
   depth = 0
 }: {
@@ -643,6 +767,9 @@ function NoteNode({
   tags: TagSummary[];
   active: boolean;
   workspaceView: "active" | "archive" | "trash";
+  dragItem?: ExplorerDragItem | null;
+  setDragItem?: (item: ExplorerDragItem | null) => void;
+  clearDragState?: () => void;
   onContextMenu: (event: MouseEvent) => void;
   depth?: number;
 }) {
@@ -656,7 +783,9 @@ function NoteNode({
         event.stopPropagation();
         event.dataTransfer.setData("application/x-technote-note", note.id);
         event.dataTransfer.effectAllowed = "move";
+        setDragItem?.({ type: "note", id: note.id, label: note.title });
       }}
+      onDragEnd={clearDragState}
       onContextMenu={(event) => {
         event.stopPropagation();
         onContextMenu(event);
@@ -671,7 +800,36 @@ function NoteNode({
         detail={getNoteDetail(note, workspaceView)}
         pinned={note.isPinned}
         depth={depth}
+        dragging={dragItem?.type === "note" && dragItem.id === note.id}
       />
+    </div>
+  );
+}
+
+function ExplorerDragGhost({ item, dropTarget }: { item: ExplorerDragItem; dropTarget: ExplorerDropTarget }) {
+  const targetLabel =
+    dropTarget?.type === "root"
+      ? "Move to workspace root"
+      : dropTarget?.type === "folder" && dropTarget.valid
+        ? `Move into ${dropTarget.label}`
+        : dropTarget?.type === "folder"
+          ? "Cannot drop here"
+          : item.type === "note"
+            ? "Choose a folder or workspace root"
+            : "Choose a parent folder or workspace root";
+
+  return (
+    <div className="pointer-events-none sticky bottom-3 z-30 mx-2 rounded-md border border-border bg-panel-strong px-3 py-2 text-xs shadow-2xl shadow-black/30">
+      <div className="flex items-center gap-2">
+        <span
+          className={
+            "h-2 w-2 rounded-full " +
+            (dropTarget?.valid === false ? "bg-red-400" : dropTarget ? "bg-primary" : "bg-muted-foreground")
+          }
+        />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{item.label}</span>
+      </div>
+      <p className="mt-1 truncate text-muted-foreground">{targetLabel}</p>
     </div>
   );
 }
@@ -711,18 +869,36 @@ function ExplorerContextMenu({
       ) : menu.type === "note" ? (
         workspaceView === "archive" ? (
           <>
-            <form action={restoreArchivedNoteAction} onSubmit={onClose}>
+            <form
+              action={restoreArchivedNoteAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleRestored(menu.note.title));
+                onClose();
+              }}
+            >
               <input type="hidden" name="noteId" value={menu.note.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore to workspace</MenuSubmit>
             </form>
-            <form action={moveNoteToTrashAction} onSubmit={() => closeNoteLocally(menu.note.id, onClose)}>
+            <form
+              action={moveNoteToTrashAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleMovedToTrash(menu.note.title));
+                closeNoteLocally(menu.note.id, onClose);
+              }}
+            >
               <input type="hidden" name="noteId" value={menu.note.id} />
               <MenuSubmit danger icon={<Trash2 size={14} />}>Move to Trash</MenuSubmit>
             </form>
           </>
         ) : workspaceView === "trash" ? (
           <>
-            <form action={restoreTrashedNoteAction} onSubmit={onClose}>
+            <form
+              action={restoreTrashedNoteAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleRestored(menu.note.title));
+                onClose();
+              }}
+            >
               <input type="hidden" name="noteId" value={menu.note.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore</MenuSubmit>
             </form>
@@ -737,7 +913,10 @@ function ExplorerContextMenu({
                   confirmLabel: "Delete forever",
                   action: deleteNoteForeverAction,
                   fields: [{ name: "noteId", value: menu.note.id }],
-                  onConfirm: () => closeNoteLocally(menu.note.id, onClose)
+                  onConfirm: () => {
+                    notify(notificationCopy.lifecycleDeletedForever(menu.note.title));
+                    closeNoteLocally(menu.note.id, onClose);
+                  }
                 });
               }}
             >
@@ -778,7 +957,13 @@ function ExplorerContextMenu({
             <input type="hidden" name="isPinned" value={String(menu.note.isPinned)} />
             <MenuSubmit icon={<Pin size={14} />}>{menu.note.isPinned ? "Unpin" : "Pin"}</MenuSubmit>
           </form>
-          <form action={archiveNoteAction} onSubmit={() => closeNoteLocally(menu.note.id, onClose)}>
+          <form
+            action={archiveNoteAction}
+            onSubmit={() => {
+              notify(notificationCopy.lifecycleArchived(menu.note.title));
+              closeNoteLocally(menu.note.id, onClose);
+            }}
+          >
             <input type="hidden" name="noteId" value={menu.note.id} />
             <MenuSubmit icon={<Archive size={14} />}>Archive</MenuSubmit>
           </form>
@@ -794,7 +979,13 @@ function ExplorerContextMenu({
           ) : (
             <MenuButton onClick={() => setRenaming(true)}>Rename</MenuButton>
           )}
-          <form action={deleteNoteAction} onSubmit={() => closeNoteLocally(menu.note.id, onClose)}>
+          <form
+            action={deleteNoteAction}
+            onSubmit={() => {
+              notify(notificationCopy.lifecycleMovedToTrash(menu.note.title));
+              closeNoteLocally(menu.note.id, onClose);
+            }}
+          >
             <input type="hidden" name="noteId" value={menu.note.id} />
             <MenuSubmit danger icon={<Trash2 size={14} />}>Delete</MenuSubmit>
           </form>
@@ -803,18 +994,36 @@ function ExplorerContextMenu({
       ) : (
         workspaceView === "archive" ? (
           <>
-            <form action={restoreArchivedFolderAction} onSubmit={onClose}>
+            <form
+              action={restoreArchivedFolderAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleRestored(menu.folder.name));
+                onClose();
+              }}
+            >
               <input type="hidden" name="folderId" value={menu.folder.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore folder</MenuSubmit>
             </form>
-            <form action={deleteFolderAction} onSubmit={onClose}>
+            <form
+              action={deleteFolderAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleMovedToTrash(menu.folder.name));
+                onClose();
+              }}
+            >
               <input type="hidden" name="folderId" value={menu.folder.id} />
               <MenuSubmit danger icon={<Trash2 size={14} />}>Move folder to Trash</MenuSubmit>
             </form>
           </>
         ) : workspaceView === "trash" ? (
           <>
-            <form action={restoreTrashedFolderAction} onSubmit={onClose}>
+            <form
+              action={restoreTrashedFolderAction}
+              onSubmit={() => {
+                notify(notificationCopy.lifecycleRestored(menu.folder.name));
+                onClose();
+              }}
+            >
               <input type="hidden" name="folderId" value={menu.folder.id} />
               <MenuSubmit icon={<RotateCcw size={14} />}>Restore folder</MenuSubmit>
             </form>
@@ -829,7 +1038,10 @@ function ExplorerContextMenu({
                   confirmLabel: "Delete forever",
                   action: deleteFolderForeverAction,
                   fields: [{ name: "folderId", value: menu.folder.id }],
-                  onConfirm: onClose
+                  onConfirm: () => {
+                    notify(notificationCopy.lifecycleDeletedForever(menu.folder.name));
+                    onClose();
+                  }
                 });
               }}
             >
@@ -847,7 +1059,13 @@ function ExplorerContextMenu({
             <input type="hidden" name="isPinned" value={String(menu.folder.isPinned)} />
             <MenuSubmit icon={<Pin size={14} />}>{menu.folder.isPinned ? "Unpin folder" : "Pin folder"}</MenuSubmit>
           </form>
-          <form action={archiveFolderNotesAction} onSubmit={onClose}>
+          <form
+            action={archiveFolderNotesAction}
+            onSubmit={() => {
+              notify(notificationCopy.lifecycleArchived(menu.folder.name));
+              onClose();
+            }}
+          >
             <input type="hidden" name="folderId" value={menu.folder.id} />
             <MenuSubmit icon={<Archive size={14} />}>Archive folder</MenuSubmit>
           </form>
@@ -863,7 +1081,13 @@ function ExplorerContextMenu({
           ) : (
             <MenuButton onClick={() => setRenaming(true)}>Rename</MenuButton>
           )}
-          <form action={deleteFolderAction} onSubmit={onClose}>
+          <form
+            action={deleteFolderAction}
+            onSubmit={() => {
+              notify(notificationCopy.lifecycleMovedToTrash(menu.folder.name));
+              onClose();
+            }}
+          >
             <input type="hidden" name="folderId" value={menu.folder.id} />
             <MenuSubmit danger icon={<Trash2 size={14} />}>Delete folder</MenuSubmit>
           </form>
@@ -985,6 +1209,8 @@ function ExplorerLink({
   icon,
   detail,
   pinned,
+  dropState,
+  dragging,
   depth = 0
 }: {
   href?: string;
@@ -994,14 +1220,23 @@ function ExplorerLink({
   icon?: ReactNode;
   detail?: string;
   pinned?: boolean;
+  dropState?: "valid" | "invalid";
+  dragging?: boolean;
   depth?: number;
 }) {
+  const stateClass = dragging
+    ? "opacity-45"
+    : dropState === "valid"
+      ? "bg-primary/10 text-foreground shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.45)]"
+      : dropState === "invalid"
+        ? "bg-red-500/10 text-red-200 shadow-[inset_0_0_0_1px_rgb(248_113_113/0.45)]"
+        : active
+          ? "bg-muted text-foreground shadow-[inset_3px_0_0_hsl(var(--primary))]"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground";
   const className =
     "group relative grid min-h-8 grid-cols-[16px_minmax(0,1fr)] items-center gap-2 rounded-md py-1.5 transition " +
     (pinned ? "pr-7 " : "pr-2 ") +
-    (active
-      ? "bg-muted text-foreground shadow-[inset_3px_0_0_hsl(var(--primary))]"
-      : "text-muted-foreground hover:bg-muted hover:text-foreground");
+    stateClass;
   const content = (
     <>
       <span className="relative flex h-4 w-4 items-center justify-center">
@@ -1149,37 +1384,29 @@ function ConfirmActionDialog({
   }, [onClose]);
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="confirm-action-title"
+    <Dialog
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
           onClose();
         }
       }}
     >
-      <div className="w-full max-w-sm rounded-md border border-border bg-panel-strong p-4 shadow-2xl">
+      <DialogContent>
         <div className="flex items-start gap-3">
           <span className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-md bg-red-500/10 text-red-400">
             <Trash2 size={16} />
           </span>
           <div className="min-w-0">
-            <h2 id="confirm-action-title" className="text-sm font-semibold text-foreground">
-              {confirmAction.title}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">{confirmAction.message}</p>
+            <DialogHeader>
+              <DialogTitle>{confirmAction.title}</DialogTitle>
+              <DialogDescription>{confirmAction.message}</DialogDescription>
+            </DialogHeader>
           </div>
         </div>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            className="h-8 rounded-md border border-border px-3 text-xs font-medium hover:bg-muted"
-            onClick={onClose}
-          >
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>
             Cancel
-          </button>
+          </Button>
           <form
             action={confirmAction.action}
             onSubmit={() => {
@@ -1190,13 +1417,13 @@ function ConfirmActionDialog({
             {confirmAction.fields.map((field) => (
               <input key={field.name} type="hidden" name={field.name} value={field.value} />
             ))}
-            <button className="h-8 rounded-md bg-red-500 px-3 text-xs font-semibold text-white hover:bg-red-600">
+            <Button variant="destructive" size="sm" type="submit">
               {confirmAction.confirmLabel}
-            </button>
+            </Button>
           </form>
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1211,7 +1438,7 @@ function LifecycleNavigation({
 }) {
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-background p-1">
+      <div className="grid grid-cols-3 gap-1 rounded-md border border-border bg-background p-1 shadow-sm">
         <LifecycleLink href="/" label="Active" active={activeView === "active"} icon={<FileText size={13} />} />
         <LifecycleLink href="/archive" label="Archive" active={activeView === "archive"} icon={<Archive size={13} />} />
         <LifecycleLink href="/trash" label="Trash" active={activeView === "trash"} icon={<Trash2 size={13} />} />
@@ -1219,14 +1446,15 @@ function LifecycleNavigation({
       {activeView === "trash" && hasTrashItems ? (
         <button
           type="button"
-          className="flex h-8 w-full items-center justify-center gap-2 rounded-md border border-red-500/40 text-xs font-medium text-red-400 hover:bg-red-500/10"
+          className="flex min-h-9 w-full items-center justify-center gap-2 rounded-md border border-red-500/40 px-2 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
           onClick={() => {
             requestConfirm({
               title: "Delete all Trash",
               message: "Delete all Trash items forever? This cannot be undone.",
               confirmLabel: "Delete all",
               action: deleteAllTrashAction,
-              fields: []
+              fields: [],
+              onConfirm: () => notify(notificationCopy.lifecycleTrashEmptied())
             });
           }}
         >
@@ -1254,7 +1482,7 @@ function LifecycleLink({
       href={href}
       className={
         "inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition " +
-        (active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
+        (active ? "bg-muted text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]" : "text-muted-foreground hover:bg-muted hover:text-foreground")
       }
     >
       {icon}

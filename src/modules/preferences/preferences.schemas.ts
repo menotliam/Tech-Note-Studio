@@ -13,6 +13,7 @@ import {
   editorLineHeightValues,
   editorWidthValues,
   gradientPresetValues,
+  reducedMotionPreferenceValues,
   noteListStyleValues,
   themePreferenceValues
 } from "./preferences.defaults";
@@ -27,6 +28,7 @@ import type {
 
 export const appearancePreferencesSchema = z.object({
   theme: z.enum(themePreferenceValues).default(defaultUserPreferences.appearance.theme),
+  reducedMotion: z.enum(reducedMotionPreferenceValues).default(defaultUserPreferences.appearance.reducedMotion),
   accentPreset: z.enum(accentPresetValues).default(defaultUserPreferences.appearance.accentPreset),
   gradientPreset: z.enum(gradientPresetValues).nullable().default(defaultUserPreferences.appearance.gradientPreset)
 });
@@ -68,6 +70,7 @@ export const userPreferencesSchema = z.object({
 const appearancePreferencesPatchSchema = z
   .object({
     theme: z.enum(themePreferenceValues).optional(),
+    reducedMotion: z.enum(reducedMotionPreferenceValues).optional(),
     accentPreset: z.enum(accentPresetValues).optional(),
     gradientPreset: z.enum(gradientPresetValues).nullable().optional()
   })

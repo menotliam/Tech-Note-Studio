@@ -9,12 +9,14 @@ import type {
   editorLineHeightValues,
   editorWidthValues,
   gradientPresetValues,
+  reducedMotionPreferenceValues,
   noteListStyleValues,
   themePreferenceValues
 } from "./preferences.defaults";
 import type { KeybindingPreferences } from "@/modules/keybindings/keybindings.types";
 
 export type ThemePreference = (typeof themePreferenceValues)[number];
+export type ReducedMotionPreference = (typeof reducedMotionPreferenceValues)[number];
 export type AccentPreset = (typeof accentPresetValues)[number];
 export type GradientPreset = (typeof gradientPresetValues)[number];
 export type DashboardDensity = (typeof dashboardDensityValues)[number];
@@ -29,6 +31,7 @@ export type CodeTheme = (typeof codeThemeValues)[number];
 
 export type AppearancePreferences = {
   theme: ThemePreference;
+  reducedMotion: ReducedMotionPreference;
   accentPreset: AccentPreset;
   gradientPreset: GradientPreset | null;
 };

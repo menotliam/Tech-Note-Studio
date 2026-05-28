@@ -1,6 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+  type RefObject
+} from "react";
 import { useRouter } from "next/navigation";
 import { Extension, type CommandProps } from "@tiptap/core";
 import { EditorContent, type Editor, type JSONContent, useEditor } from "@tiptap/react";
@@ -50,6 +60,11 @@ import { TechnicalCodeBlock } from "@/modules/editor/extensions/TechnicalCodeBlo
 import type { EditorDocument } from "@/modules/editor/editor.types";
 import type { DetectionResult } from "@/modules/detection/detection.types";
 import { updateNoteAction } from "@/modules/notes/note.actions";
+import { notificationCopy } from "@/modules/notifications/notification-copy";
+import { notify } from "@/modules/notifications/notification.service";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import {
   createUpdateNoteOperation,
   discardCachedNoteUpdate,
@@ -80,6 +95,7 @@ type EditorFindHighlightState = {
 
 const imageCaretAnchor = "\u200B";
 const internalImageDragType = "application/x-technote-image-position";
+const pendingEditorScrollRestores = new Map<string, number>();
 const editorFindHighlightPluginKey = new PluginKey<EditorFindHighlightState>("editorFindHighlight");
 
 declare module "@tiptap/core" {
@@ -269,6 +285,23 @@ export function RichNoteEditor({
     result: DetectionResult;
   } | null>(null);
 
+  useLayoutEffect(() => {
+    const scrollTop = pendingEditorScrollRestores.get(noteId);
+
+    if (scrollTop === undefined) {
+      return;
+    }
+
+    const scrollContainer = containerRef.current?.closest<HTMLElement>("[data-editor-scroll-container]");
+
+    if (!scrollContainer) {
+      return;
+    }
+
+    pendingEditorScrollRestores.delete(noteId);
+    restoreScrollPosition(scrollContainer, scrollTop);
+  }, [noteId, updatedAt]);
+
   useEffect(() => {
     autoDetectionEnabledRef.current = autoDetectionEnabled;
   }, [autoDetectionEnabled]);
@@ -403,6 +436,7 @@ export function RichNoteEditor({
           event.preventDefault();
 
           if (typeof navigator !== "undefined" && !navigator.onLine) {
+            notify(notificationCopy.imageUploadOffline());
             return true;
           }
 
@@ -421,6 +455,13 @@ export function RichNoteEditor({
 
         if (!pastedText.trim()) {
           return false;
+        }
+
+        if (isPlaintextCodeBlockClipboardPaste(event)) {
+          event.preventDefault();
+          view.dispatch(view.state.tr.insertText(pastedText).scrollIntoView());
+          setPasteSuggestion(null);
+          return true;
         }
 
         const pasteAction = getPasteDetectionAction(pastedText, autoDetectionEnabledRef.current);
@@ -477,6 +518,7 @@ export function RichNoteEditor({
         event.preventDefault();
 
         if (typeof navigator !== "undefined" && !navigator.onLine) {
+          notify(notificationCopy.imageUploadOffline());
           return true;
         }
 
@@ -597,11 +639,25 @@ export function RichNoteEditor({
     formData.set("contentJson", JSON.stringify(currentDocument));
     formData.set("contentText", currentText);
 
-    await updateNoteAction(formData);
-    savedCacheVersionRef.current = cacheWriteVersionRef.current;
-    await discardCachedNoteUpdate(noteId);
-    markNoteDirty(noteId, false);
-    router.refresh();
+    try {
+      await updateNoteAction(formData);
+      savedCacheVersionRef.current = cacheWriteVersionRef.current;
+      await discardCachedNoteUpdate(noteId);
+      markNoteDirty(noteId, false);
+      notify(notificationCopy.noteSaved());
+      const scrollContainer = containerRef.current?.closest<HTMLElement>("[data-editor-scroll-container]");
+      const scrollTop = scrollContainer?.scrollTop ?? null;
+      if (scrollTop !== null) {
+        pendingEditorScrollRestores.set(noteId, scrollTop);
+      }
+      router.refresh();
+      if (scrollContainer && scrollTop !== null) {
+        restoreScrollPosition(scrollContainer, scrollTop);
+      }
+    } catch (error) {
+      notify(notificationCopy.noteSaveFailed());
+      throw error;
+    }
   }, [contentJson, contentText, editor, noteId, router, title]);
 
   useEffect(() => {
@@ -613,7 +669,9 @@ export function RichNoteEditor({
 
     function handleSubmit(event: Event) {
       event.preventDefault();
-      void saveCurrentNote();
+      void saveCurrentNote().catch(() => {
+        // The toast explains the failure; the editor keeps the local draft.
+      });
     }
 
     form?.addEventListener("submit", handleSubmit);
@@ -641,6 +699,10 @@ export function RichNoteEditor({
         activeIndex: Math.min(activeFindIndex, Math.max(findMatches.length - 1, 0))
       } satisfies EditorFindHighlightState)
     );
+
+    if (findOpen && findMatches.length > 0) {
+      window.requestAnimationFrame(() => scrollActiveEditorFindMatchIntoView(editor));
+    }
   }, [activeFindIndex, editor, findMatches, findOpen]);
 
   useEffect(() => {
@@ -674,7 +736,11 @@ export function RichNoteEditor({
     }
 
     const noteIdToClose = pendingCloseNoteId;
-    await saveCurrentNote();
+    try {
+      await saveCurrentNote();
+    } catch {
+      return;
+    }
     setPendingCloseNoteId(null);
     window.dispatchEvent(new CustomEvent("technote:close-tab", { detail: { noteId: noteIdToClose } }));
   }
@@ -702,8 +768,8 @@ export function RichNoteEditor({
       <input type="hidden" name="contentJson" value={contentJson} />
       <input type="hidden" name="contentText" value={contentText} />
 
-      <div className="sticky top-0 z-10 flex flex-wrap gap-1 border-b border-border bg-background/95 p-2 backdrop-blur">
-        <label className="mr-2 inline-flex h-8 items-center gap-2 rounded-md border border-border px-2 text-sm text-muted-foreground">
+      <div className="sticky top-0 z-10 flex min-h-11 items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-2 py-1.5 backdrop-blur">
+        <label className="mr-1 inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border bg-panel px-2 text-xs text-muted-foreground">
           <input
             type="checkbox"
             checked={autoDetectionEnabled}
@@ -878,39 +944,30 @@ export function RichNoteEditor({
 
       <EditorContent editor={editor} />
       {pendingCloseNoteId ? (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-md border border-border bg-panel-strong p-4 shadow-2xl">
-            <h2 className="text-base font-semibold">Unsaved changes</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              This note has unsaved changes. Save before leaving?
-            </p>
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-md border border-border px-3 py-2 text-sm hover:bg-muted"
-                onClick={() => setPendingCloseNoteId(null)}
-              >
+        <Dialog>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Unsaved changes</DialogTitle>
+              <DialogDescription>This note has unsaved changes. Save before leaving?</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPendingCloseNoteId(null)}>
                 Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={continueWithoutSaving}
-              >
+              </Button>
+              <Button variant="secondary" onClick={continueWithoutSaving}>
                 Don't Save
-              </button>
-              <button
-                type="button"
-                className="rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground"
+              </Button>
+              <Button
+                variant="primary"
                 onClick={() => {
                   void saveAndContinue();
                 }}
               >
                 Save
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       ) : null}
     </div>
   );
@@ -1078,12 +1135,12 @@ function EditorFindPanel({
   const hasMatches = matchCount > 0;
 
   return (
-    <div className="sticky left-2 top-[49px] z-20 mt-2 inline-flex w-fit max-w-[calc(100%-1rem)] items-center gap-1 rounded-md border border-border bg-panel-strong px-2 py-1.5 shadow-lg">
+    <div className="sticky left-2 top-[49px] z-20 mt-2 inline-flex w-fit max-w-[calc(100%-1rem)] items-center gap-1 rounded-md border border-border bg-panel-strong px-2 py-1.5 shadow-2xl shadow-black/20">
       <Search size={15} className="text-muted-foreground" />
-      <input
+      <Input
         ref={inputRef}
         autoFocus
-        className="h-7 w-44 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
+        className="h-7 w-44 px-2 text-sm"
         value={query}
         placeholder="Find in note"
         onChange={(event) => onQueryChange(event.target.value)}
@@ -1105,7 +1162,7 @@ function EditorFindPanel({
           }
         }}
       />
-      <span className="min-w-12 text-right text-xs text-muted-foreground">
+      <span className="min-w-12 rounded bg-muted px-1.5 py-1 text-right text-xs tabular-nums text-muted-foreground">
         {query ? (hasMatches ? `${activeIndex + 1}/${matchCount}` : "0/0") : ""}
       </span>
       <ToolbarButton label="Previous match" active={false} onClick={hasMatches ? onPrevious : () => undefined}>
@@ -1152,12 +1209,67 @@ function collectEditorFindMatches(editor: Editor, query: string): EditorFindMatc
   return matches;
 }
 
+function scrollActiveEditorFindMatchIntoView(editor: Editor) {
+  const activeMatch = editor.view.dom.querySelector(".editor-find-match-active");
+
+  if (!(activeMatch instanceof HTMLElement)) {
+    return;
+  }
+
+  activeMatch.scrollIntoView({
+    behavior: "smooth",
+    block: "center",
+    inline: "nearest"
+  });
+}
+
+function isPlaintextCodeBlockClipboardPaste(event: ClipboardEvent) {
+  const html = event.clipboardData?.getData("text/html") ?? "";
+
+  if (!html.includes("data-language")) {
+    return false;
+  }
+
+  const document = new DOMParser().parseFromString(html, "text/html");
+  const codeBlocks = Array.from(document.querySelectorAll("[data-language]"));
+
+  return codeBlocks.some(
+    (codeBlock) =>
+      codeBlock.getAttribute("data-language") === "plaintext" &&
+      (codeBlock.hasAttribute("data-detected-type") ||
+        codeBlock.hasAttribute("data-line-numbers") ||
+        codeBlock.hasAttribute("data-word-wrap"))
+  );
+}
+
 function dispatchNoteSaveStarted(noteId: string) {
   if (typeof window === "undefined") {
     return;
   }
 
   window.dispatchEvent(new CustomEvent("technote:note-save-start", { detail: { noteId } }));
+}
+
+function restoreScrollPosition(element: HTMLElement, scrollTop: number) {
+  element.scrollTop = scrollTop;
+
+  let frames = 0;
+  function restoreNextFrame() {
+    element.scrollTop = scrollTop;
+    frames += 1;
+
+    if (frames < 4) {
+      window.requestAnimationFrame(restoreNextFrame);
+    }
+  }
+
+  window.requestAnimationFrame(() => {
+    restoreNextFrame();
+  });
+
+  window.setTimeout(() => {
+    element.scrollTop = scrollTop;
+  }, 120);
 }
 
 function ToolbarButton({
@@ -1175,8 +1287,8 @@ function ToolbarButton({
     <button
       type="button"
       className={
-        "inline-flex h-8 w-8 items-center justify-center rounded-md transition hover:bg-muted " +
-        (active ? "bg-muted text-primary" : "text-muted-foreground")
+        "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-muted active:translate-y-px " +
+        (active ? "bg-muted text-primary shadow-[inset_0_-2px_0_hsl(var(--primary))]" : "text-muted-foreground hover:text-foreground")
       }
       onClick={onClick}
       title={label}
@@ -1449,20 +1561,38 @@ async function uploadImagesSequentially({
   insertAtSelection: boolean;
   position?: number;
 }) {
+  if (files.length === 0) {
+    return;
+  }
+
+  if (isOffline()) {
+    notify(notificationCopy.imageUploadOffline());
+    return;
+  }
+
+  notify(notificationCopy.imageUploadStarted(files.length));
+
   let nextPosition = position;
+  let successCount = 0;
+  let failedCount = 0;
 
   for (const file of files) {
     const result = await uploadImageFile(file, noteId);
 
     if (result.src) {
+      successCount += 1;
       nextPosition = insertImageIntoEditor(view, {
         src: result.src,
         alt: result.alt ?? file.name,
         insertAtSelection,
         position: nextPosition
       });
+    } else {
+      failedCount += 1;
     }
   }
+
+  notify(notificationCopy.imageUploadFinished(successCount, failedCount));
 }
 
 async function uploadImageFile(file: File, noteId: string) {
