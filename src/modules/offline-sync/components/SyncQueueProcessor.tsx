@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
-import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { notificationCopy } from "@/modules/notifications/notification-copy";
 import { notify } from "@/modules/notifications/notification.service";
 import {
@@ -79,7 +78,7 @@ async function processSyncQueue() {
       .update({
         title: note.title,
         content_json: contentJson,
-        content_text: extractPlainTextFromEditorJson(contentJson),
+        content_text: null,
         schema_version: contentJson.schemaVersion ?? 1,
         last_synced_at: new Date().toISOString()
       })

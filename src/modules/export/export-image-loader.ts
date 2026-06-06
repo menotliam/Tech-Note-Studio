@@ -152,9 +152,25 @@ function collectExportImageReferences(notes: ExportImageNote[], documents: Expor
 
 function getImageReferenceFromBlock(block: Extract<ExportBlock, { type: "image" }>) {
   return {
-    fileId: block.fileId ?? null,
+    fileId: block.fileId ?? getFileIdFromAppImageUrl(block.src),
     storagePath: getStoragePathFromPublicUrl(block.src)
   };
+}
+
+function getFileIdFromAppImageUrl(src: string) {
+  try {
+    const url = new URL(src, "https://tech-note-studio.local");
+
+    if (!src.startsWith("/") || url.pathname !== "/api/files/note-image") {
+      return null;
+    }
+
+    const fileId = url.searchParams.get("fileId");
+
+    return fileId && isUuidLike(fileId) ? fileId : null;
+  } catch {
+    return null;
+  }
 }
 
 function getStoragePathFromPublicUrl(src: string) {
@@ -178,4 +194,8 @@ function getStoragePathFromPublicUrl(src: string) {
 
 function isAllowedExportImageMimeType(value: string): value is ExportImageAsset["mimeType"] {
   return allowedExportImageMimeTypes.has(value);
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

@@ -632,12 +632,10 @@ export function RichNoteEditor({
     const currentTitle =
       document.querySelector<HTMLInputElement>(`input[name="title"][data-note-id="${noteId}"]`)?.value ?? title;
     const currentDocument = editor ? toEditorDocument(editor.getJSON()) : (JSON.parse(contentJson) as EditorDocument);
-    const currentText = editor?.getText({ blockSeparator: "\n" }) ?? contentText;
 
     formData.set("noteId", noteId);
     formData.set("title", currentTitle);
     formData.set("contentJson", JSON.stringify(currentDocument));
-    formData.set("contentText", currentText);
 
     try {
       await updateNoteAction(formData);
@@ -658,7 +656,7 @@ export function RichNoteEditor({
       notify(notificationCopy.noteSaveFailed());
       throw error;
     }
-  }, [contentJson, contentText, editor, noteId, router, title]);
+  }, [contentJson, editor, noteId, router, title]);
 
   useEffect(() => {
     saveCurrentNoteRef.current = saveCurrentNote;
@@ -766,7 +764,6 @@ export function RichNoteEditor({
       }}
     >
       <input type="hidden" name="contentJson" value={contentJson} />
-      <input type="hidden" name="contentText" value={contentText} />
 
       <div className="sticky top-0 z-30 flex min-h-11 items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-2 py-1.5 shadow-sm backdrop-blur">
         <label className="mr-1 inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border bg-panel px-2 text-xs text-muted-foreground">
@@ -1584,6 +1581,7 @@ async function uploadImagesSequentially({
       nextPosition = insertImageIntoEditor(view, {
         src: result.src,
         alt: result.alt ?? file.name,
+        fileId: result.fileId,
         insertAtSelection,
         position: nextPosition
       });
@@ -1604,13 +1602,13 @@ async function uploadImageFile(file: File, noteId: string) {
       method: "POST",
       body: formData
     });
-    const payload = (await response.json()) as { src?: string; alt?: string };
+    const payload = (await response.json()) as { src?: string; alt?: string; fileId?: string };
 
     if (!response.ok || !payload.src) {
       return {};
     }
 
-    return { src: payload.src, alt: payload.alt ?? file.name };
+    return { src: payload.src, alt: payload.alt ?? file.name, fileId: payload.fileId };
   } catch {
     return {};
   }
@@ -1618,7 +1616,7 @@ async function uploadImageFile(file: File, noteId: string) {
 
 function insertImageIntoEditor(
   view: EditorView,
-  image: { src: string; alt: string; insertAtSelection: boolean; position?: number }
+  image: { src: string; alt: string; fileId?: string; insertAtSelection: boolean; position?: number }
 ) {
   const { state, dispatch } = view;
   const imageNode = state.schema.nodes.image?.create({
@@ -1626,7 +1624,8 @@ function insertImageIntoEditor(
     alt: image.alt,
     title: "Add caption...",
     caption: "",
-    width: 420
+    width: 420,
+    fileId: image.fileId
   });
 
   if (!imageNode) {

@@ -71,6 +71,7 @@ describe("editor validation", () => {
   });
 
   it("sanitizes unsafe image attrs used by export", () => {
+    const fileId = "550e8400-e29b-41d4-a716-446655440000";
     const document = parseEditorDocumentJson(
       JSON.stringify({
         type: "doc",
@@ -90,17 +91,27 @@ describe("editor validation", () => {
               textAlign: "center",
               fileId: "not-a-uuid"
             }
+          },
+          {
+            type: "image",
+            attrs: {
+              src: `/api/files/note-image?fileId=${fileId}`,
+              fileId
+            }
           }
         ]
       })
     );
 
-    expect(document.content).toHaveLength(1);
+    expect(document.content).toHaveLength(2);
     const image = document.content?.[0] as EditorNode;
+    const privateImage = document.content?.[1] as EditorNode;
 
     expect(image.attrs?.src).toBe("https://example.com/image.png");
     expect(image.attrs?.width).toBe(1200);
     expect(image.attrs?.textAlign).toBe("center");
     expect(image.attrs?.fileId).toBeUndefined();
+    expect(privateImage.attrs?.src).toBe(`/api/files/note-image?fileId=${fileId}`);
+    expect(privateImage.attrs?.fileId).toBe(fileId);
   });
 });

@@ -8,7 +8,6 @@ type NoteRow = {
   workspace_id: string;
   title: string;
   content_json: EditorDocument;
-  content_text: string | null;
   schema_version: number;
   is_pinned: boolean;
   is_archived: boolean;
@@ -17,13 +16,13 @@ type NoteRow = {
 };
 
 const NOTE_SELECT =
-  "id, workspace_id, title, content_json, content_text, schema_version, is_pinned, is_archived, deleted_at, updated_at";
+  "id, workspace_id, title, content_json, schema_version, is_pinned, is_archived, deleted_at, updated_at";
 
 function toNoteSummary(row: NoteRow): NoteSummary {
   return {
     id: row.id,
     title: row.title,
-    contentText: row.content_text ?? "",
+    contentText: "",
     isPinned: row.is_pinned,
     isArchived: row.is_archived,
     deletedAt: row.deleted_at,
@@ -62,7 +61,12 @@ export async function listNotes(
 
   if (search) {
     const escapedSearch = search.replace(/[%_]/g, "\\$&");
-    query = query.or(`title.ilike.%${escapedSearch}%,content_text.ilike.%${escapedSearch}%`);
+    const tagNoteIds = await getNoteIdsMatchingTagSearch(supabase, ownerId, escapedSearch);
+
+    query =
+      tagNoteIds.length > 0
+        ? query.or(`title.ilike.%${escapedSearch}%,id.in.(${tagNoteIds.join(",")})`)
+        : query.ilike("title", `%${escapedSearch}%`);
   }
 
   const { data, error } = await query;
@@ -104,6 +108,36 @@ export async function listNotes(
   }
 
   return notes;
+}
+
+async function getNoteIdsMatchingTagSearch(supabase: SupabaseClient, ownerId: string, escapedSearch: string) {
+  const { data: tags, error: tagError } = await supabase
+    .from("tags")
+    .select("id")
+    .eq("owner_id", ownerId)
+    .ilike("name", `%${escapedSearch}%`);
+
+  if (tagError) {
+    throw tagError;
+  }
+
+  const tagIds = (tags as Array<{ id: string }>).map((tag) => tag.id);
+
+  if (tagIds.length === 0) {
+    return [];
+  }
+
+  const { data: noteTags, error: noteTagError } = await supabase
+    .from("note_tags")
+    .select("note_id")
+    .eq("owner_id", ownerId)
+    .in("tag_id", tagIds);
+
+  if (noteTagError) {
+    throw noteTagError;
+  }
+
+  return [...new Set((noteTags as Array<{ note_id: string }>).map((row) => row.note_id))];
 }
 
 export async function listArchivedNotes(

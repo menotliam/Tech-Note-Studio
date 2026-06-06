@@ -36,7 +36,7 @@ export default async function HomePage({
   const explorerTagId = params?.explorerTag ? organizationIdSchema.parse(params.explorerTag) : undefined;
   const requestedPanel = parseWorkspaceActivity(params?.panel);
   const [notes, templates, folders, tags, preferences, workspace] = await Promise.all([
-    listNotes(supabase, user.id, searchQuery ?? undefined),
+    listNotes(supabase, user.id),
     listSystemTemplates(supabase),
     listFolders(supabase, user.id, workspaceId),
     listTags(supabase, user.id, workspaceId),

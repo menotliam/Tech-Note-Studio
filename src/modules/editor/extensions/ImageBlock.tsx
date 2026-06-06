@@ -54,6 +54,7 @@ function ImageBlockView({ node, updateAttributes, selected, extension, getPos }:
     title?: string;
     caption?: string;
     width?: number | "small" | "medium" | "full";
+    fileId?: string;
   };
   const width = getPixelWidth(attrs.width);
   const noteId = (extension.options as ImageBlockOptions).noteId;
@@ -306,12 +307,13 @@ async function replaceImage(
     method: "POST",
     body: formData
   });
-  const payload = (await response.json()) as { src?: string; alt?: string };
+  const payload = (await response.json()) as { src?: string; alt?: string; fileId?: string };
 
   if (response.ok && payload.src) {
     updateAttributes({
       src: payload.src,
-      alt: payload.alt ?? file.name
+      alt: payload.alt ?? file.name,
+      fileId: payload.fileId
     });
   }
 }

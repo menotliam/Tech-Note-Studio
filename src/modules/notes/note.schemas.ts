@@ -12,8 +12,7 @@ export const updateNoteSchema = z.object({
   noteId: z.string().uuid(),
   title: noteTitleSchema,
   body: noteBodySchema.optional(),
-  contentJson: z.string().optional(),
-  contentText: noteBodySchema.optional()
+  contentJson: z.string().optional()
 });
 
 export const noteIdSchema = z.string().uuid();

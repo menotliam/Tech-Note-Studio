@@ -12,6 +12,17 @@ describe("note schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("does not preserve plaintext contentText input", () => {
+    const result = updateNoteSchema.parse({
+      noteId: "550e8400-e29b-41d4-a716-446655440000",
+      title: "SQL Notes",
+      contentJson: JSON.stringify({ type: "doc", content: [] }),
+      contentText: "SELECT * FROM private_notes;"
+    });
+
+    expect("contentText" in result).toBe(false);
+  });
+
   it("rejects an empty note title", () => {
     const result = updateNoteSchema.safeParse({
       noteId: "550e8400-e29b-41d4-a716-446655440000",

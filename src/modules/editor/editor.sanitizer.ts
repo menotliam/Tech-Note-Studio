@@ -181,9 +181,29 @@ function isSafeUrl(value: string) {
 }
 
 function isSafeWebUrl(value: string) {
+  if (isAppControlledImageUrl(value)) {
+    return true;
+  }
+
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isAppControlledImageUrl(value: string) {
+  try {
+    const url = new URL(value, "https://tech-note-studio.local");
+    const isRelativeUrl = value.startsWith("/");
+    const fileId = url.searchParams.get("fileId") ?? "";
+
+    return (
+      isRelativeUrl &&
+      url.pathname === "/api/files/note-image" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(fileId)
+    );
   } catch {
     return false;
   }

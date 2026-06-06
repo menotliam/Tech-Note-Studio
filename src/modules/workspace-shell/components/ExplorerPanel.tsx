@@ -91,6 +91,11 @@ type ExplorerDropTarget =
   | { type: "folder"; id: string; label: string; valid: boolean }
   | null;
 
+type SearchResults = {
+  notes: NoteSummary[];
+  folders: FolderTreeNode[];
+};
+
 const tagColorPresets = [
   "#ef4444",
   "#f97316",
@@ -136,9 +141,13 @@ export function ExplorerPanel({
     [notes, activeFolderId, activeExplorerTagId]
   );
   const tree = useMemo(() => buildFolderTree(folders, explorerNotes), [folders, explorerNotes]);
+  const searchTree = useMemo(() => buildFolderTree(folders, notes), [folders, notes]);
   const visibleTree =
     workspaceView === "active" && !activeFolderId && !activeExplorerTagId ? tree : filterEmptyFolders(tree);
-  const searchResults = useMemo(() => searchNotes(notes, searchQuery), [notes, searchQuery]);
+  const searchResults = useMemo(
+    () => searchWorkspace(notes, searchTree.folders, searchQuery, tags),
+    [notes, searchTree.folders, searchQuery, tags]
+  );
   const activeTag = activeTagId ? tags.find((tag) => tag.id === activeTagId) ?? null : null;
   const activeTagNotes = activeTagId ? notes.filter((note) => note.tagIds.includes(activeTagId)) : [];
   const activeExplorerTag = activeExplorerTagId
@@ -147,6 +156,7 @@ export function ExplorerPanel({
   const explorerIsEmpty = visibleTree.folders.length === 0 && visibleTree.unfiledNotes.length === 0;
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [collapsedSearchFolders, setCollapsedSearchFolders] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [tagPendingDelete, setTagPendingDelete] = useState<TagSummary | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmActionState | null>(null);
@@ -448,26 +458,43 @@ export function ExplorerPanel({
             <input
               name="q"
               className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-              placeholder="Search notes"
+              placeholder="Search titles, tags, folders"
               defaultValue={searchQuery}
             />
           </form>
           <div className="space-y-1">
             {searchQuery ? (
-              searchResults.length > 0 ? (
-                searchResults.map((note) => (
-                  <NoteNode
-                    key={note.id}
-                    note={note}
-                    tags={tags}
-                    active={selectedNote?.id === note.id}
-                    workspaceView={workspaceView}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
-                    }}
-                  />
-                ))
+              searchResults.notes.length > 0 || searchResults.folders.length > 0 ? (
+                <>
+                  {searchResults.folders.map((folder) => (
+                    <SearchFolderNode
+                      key={folder.id}
+                      folder={folder}
+                      tags={tags}
+                      selectedNoteId={selectedNote?.id}
+                      workspaceView={workspaceView}
+                      collapsedFolders={collapsedSearchFolders}
+                      setCollapsedFolders={setCollapsedSearchFolders}
+                      onNoteContextMenu={(event, note) => {
+                        event.preventDefault();
+                        setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
+                      }}
+                    />
+                  ))}
+                  {searchResults.notes.map((note) => (
+                    <NoteNode
+                      key={note.id}
+                      note={note}
+                      tags={tags}
+                      active={selectedNote?.id === note.id}
+                      workspaceView={workspaceView}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setContextMenu({ type: "note", note, x: event.clientX, y: event.clientY });
+                      }}
+                    />
+                  ))}
+                </>
               ) : (
                 <RichEmptyState
                   compact
@@ -831,6 +858,90 @@ function FolderNode({
               setDragItem={setDragItem}
               clearDragState={clearDragState}
               onContextMenu={(event) => openNoteContextMenu(event, note)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SearchFolderNode({
+  folder,
+  tags,
+  selectedNoteId,
+  workspaceView,
+  collapsedFolders,
+  setCollapsedFolders,
+  onNoteContextMenu,
+  depth = 0
+}: {
+  folder: FolderTreeNode;
+  tags: TagSummary[];
+  selectedNoteId?: string;
+  workspaceView: "active" | "archive" | "trash";
+  collapsedFolders: Set<string>;
+  setCollapsedFolders: (value: Set<string>) => void;
+  onNoteContextMenu: (event: MouseEvent, note: NoteSummary) => void;
+  depth?: number;
+}) {
+  const collapsed = collapsedFolders.has(folder.id);
+
+  function toggleCollapsed() {
+    const next = new Set(collapsedFolders);
+
+    if (next.has(folder.id)) {
+      next.delete(folder.id);
+    } else {
+      next.add(folder.id);
+    }
+
+    setCollapsedFolders(next);
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="grid min-h-8 w-full grid-cols-[16px_16px_minmax(0,1fr)] items-center gap-2 rounded-md py-1.5 pr-2 text-left text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        title={folder.name}
+        aria-expanded={!collapsed}
+        onClick={toggleCollapsed}
+      >
+        <ChevronDown size={13} className={collapsed ? "-rotate-90 transition" : "transition"} />
+        <Folder size={14} />
+        <span className="min-w-0">
+          <span className="block truncate text-xs font-medium">{folder.name}</span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {getSearchFolderDetail(folder)}
+          </span>
+        </span>
+      </button>
+      {!collapsed ? (
+        <div>
+          {folder.children.map((child) => (
+            <SearchFolderNode
+              key={child.id}
+              folder={child}
+              tags={tags}
+              selectedNoteId={selectedNoteId}
+              workspaceView={workspaceView}
+              collapsedFolders={collapsedFolders}
+              setCollapsedFolders={setCollapsedFolders}
+              onNoteContextMenu={onNoteContextMenu}
+              depth={depth + 1}
+            />
+          ))}
+          {folder.notes.map((note) => (
+            <NoteNode
+              key={note.id}
+              note={note}
+              tags={tags}
+              active={selectedNoteId === note.id}
+              workspaceView={workspaceView}
+              depth={depth + 1}
+              onContextMenu={(event) => onNoteContextMenu(event, note)}
             />
           ))}
         </div>
@@ -1711,6 +1822,22 @@ function getFolderDetail(folder: FolderTreeNode, workspaceView: "active" | "arch
   return undefined;
 }
 
+function getSearchFolderDetail(folder: FolderTreeNode) {
+  const noteCount = countFolderNotes(folder);
+  const folderCount = countChildFolders(folder);
+  const parts = [];
+
+  if (noteCount > 0) {
+    parts.push(`${noteCount} ${noteCount === 1 ? "note" : "notes"}`);
+  }
+
+  if (folderCount > 0) {
+    parts.push(`${folderCount} ${folderCount === 1 ? "folder" : "folders"}`);
+  }
+
+  return parts.length > 0 ? parts.join(" / ") : "Empty folder";
+}
+
 function getTrashRetentionLabel(deletedAt: string | null) {
   if (!deletedAt) {
     return "Pending cleanup";
@@ -1737,18 +1864,62 @@ function PanelTitle({ icon, title }: { icon: ReactNode; title: string }) {
   );
 }
 
-function searchNotes(notes: NoteSummary[], searchQuery: string) {
+function searchWorkspace(
+  notes: NoteSummary[],
+  folders: FolderTreeNode[],
+  searchQuery: string,
+  tags: TagSummary[]
+): SearchResults {
   const query = searchQuery.trim().toLowerCase();
 
   if (!query) {
-    return [];
+    return { notes: [], folders: [] };
   }
 
-  return notes.filter(
-    (note) =>
+  const tagById = new Map(tags.map((tag) => [tag.id, tag]));
+  const matchedFolders = searchFolders(folders, query);
+  const notesInMatchedFolders = new Set<string>();
+
+  matchedFolders.forEach((folder) => collectFolderNoteIds(folder, notesInMatchedFolders));
+
+  const matchedNotes = notes.filter((note) => {
+    if (notesInMatchedFolders.has(note.id)) {
+      return false;
+    }
+
+    return (
       note.title.toLowerCase().includes(query) ||
-      note.contentText.toLowerCase().includes(query)
-  );
+      note.tagIds.some((tagId) => tagById.get(tagId)?.name.toLowerCase().includes(query))
+    );
+  });
+
+  return {
+    notes: matchedNotes,
+    folders: matchedFolders
+  };
+}
+
+function searchFolders(folders: FolderTreeNode[], query: string): FolderTreeNode[] {
+  return folders.flatMap((folder) => {
+    if (folder.name.toLowerCase().includes(query)) {
+      return [folder];
+    }
+
+    return searchFolders(folder.children, query);
+  });
+}
+
+function collectFolderNoteIds(folder: FolderTreeNode, noteIds: Set<string>) {
+  folder.notes.forEach((note) => noteIds.add(note.id));
+  folder.children.forEach((child) => collectFolderNoteIds(child, noteIds));
+}
+
+function countFolderNotes(folder: FolderTreeNode): number {
+  return folder.notes.length + folder.children.reduce((total, child) => total + countFolderNotes(child), 0);
+}
+
+function countChildFolders(folder: FolderTreeNode): number {
+  return folder.children.length + folder.children.reduce((total, child) => total + countChildFolders(child), 0);
 }
 
 function filterExplorerNotes(

@@ -44,13 +44,13 @@ export const stateCopy = {
   searchIdle() {
     return {
       title: "Search your notes",
-      description: "Type a keyword, command name, error code, or concept to filter the current workspace."
+      description: "Type a note title, tag name, or folder name to search the current workspace."
     };
   },
   searchEmpty(query: string) {
     return {
-      title: "No matching notes",
-      description: `No note title or body text matched "${query}". Try a shorter term or check another workspace view.`
+      title: "No matching items",
+      description: `No note title, tag, or folder matched "${query}". Try a shorter term or check another workspace view.`
     };
   },
   templatesEmpty() {

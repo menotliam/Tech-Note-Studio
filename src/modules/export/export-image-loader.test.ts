@@ -98,6 +98,38 @@ describe("export image loader", () => {
     expect(storageClient.downloads).toEqual(["note-files:user-1/workspace-1/note-1/image.png"]);
   });
 
+  it("loads by file id from app-controlled image URLs", async () => {
+    const fileId = "550e8400-e29b-41d4-a716-446655440000";
+    const document = createImageDocument(`/api/files/note-image?fileId=${fileId}`);
+
+    await attachExportImageAssets({
+      ownerId: "user-1",
+      notes: [note],
+      documents: [document],
+      metadataClient: createMetadataClient([
+        {
+          id: fileId,
+          owner_id: "user-1",
+          workspace_id: "workspace-1",
+          note_id: "note-1",
+          storage_bucket: "note-files",
+          storage_path: "user-1/workspace-1/note-1/image.png",
+          original_filename: "image.png",
+          mime_type: "image/png",
+          size_bytes: 8
+        }
+      ]),
+      storageClient: createStorageClient(new Blob(["image-bytes"], { type: "image/png" })) as never
+    });
+
+    const block = document.blocks[0];
+
+    expect(block.type).toBe("image");
+    if (block.type === "image") {
+      expect(block.asset?.storagePath).toBe("user-1/workspace-1/note-1/image.png");
+    }
+  });
+
   it("rejects metadata that belongs to another workspace without exposing storage paths", async () => {
     const document = createImageDocument("https://example.supabase.co/storage/v1/object/public/note-files/user-1/workspace-1/note-1/image.png");
 

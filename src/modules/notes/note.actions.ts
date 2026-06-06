@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createEditorDocumentFromPlainText, emptyEditorDocument } from "@/modules/editor/editor-documents";
-import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
 import { logSecurityEvent } from "@/modules/security/security.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
@@ -36,7 +35,6 @@ export async function getAuthedFoundation() {
 
 export async function createBlankNoteAction() {
   const { supabase, user, workspaceId } = await getAuthedFoundation();
-  const contentText = extractPlainTextFromEditorJson(emptyEditorDocument);
 
   const { data, error } = await supabase
     .from("notes")
@@ -45,7 +43,7 @@ export async function createBlankNoteAction() {
       owner_id: user.id,
       title: "Untitled",
       content_json: emptyEditorDocument,
-      content_text: contentText,
+      content_text: null,
       schema_version: 1
     })
     .select("id")
@@ -64,8 +62,7 @@ export async function updateNoteAction(formData: FormData) {
     noteId: formData.get("noteId"),
     title: formData.get("title"),
     body: formData.get("body") || undefined,
-    contentJson: formData.get("contentJson") || undefined,
-    contentText: formData.get("contentText") || undefined
+    contentJson: formData.get("contentJson") || undefined
   });
 
   if (!parsed.success) {
@@ -76,14 +73,13 @@ export async function updateNoteAction(formData: FormData) {
   const contentJson = parsed.data.contentJson
     ? parseEditorDocumentJson(parsed.data.contentJson)
     : createEditorDocumentFromPlainText(parsed.data.body ?? "");
-  const contentText = extractPlainTextFromEditorJson(contentJson);
 
   const { error } = await supabase
     .from("notes")
     .update({
       title: parsed.data.title,
       content_json: contentJson,
-      content_text: contentText,
+      content_text: null,
       schema_version: 1,
       last_synced_at: new Date().toISOString()
     })

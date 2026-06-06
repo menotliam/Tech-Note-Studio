@@ -69,16 +69,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Image upload failed." }, { status: 500 });
   }
 
-  const { error: metadataError } = await supabase.from("note_files").insert({
-    owner_id: user.id,
-    workspace_id: note.workspace_id,
-    note_id: note.id,
-    storage_bucket: bucketName,
-    storage_path: storagePath,
-    original_filename: sanitizeFilename(file.name),
-    mime_type: file.type,
-    size_bytes: file.size
-  });
+  const { data: metadata, error: metadataError } = await supabase
+    .from("note_files")
+    .insert({
+      owner_id: user.id,
+      workspace_id: note.workspace_id,
+      note_id: note.id,
+      storage_bucket: bucketName,
+      storage_path: storagePath,
+      original_filename: sanitizeFilename(file.name),
+      mime_type: file.type,
+      size_bytes: file.size
+    })
+    .select("id")
+    .single();
 
   if (metadataError) {
     await supabase.storage.from(bucketName).remove([storagePath]);
@@ -88,8 +92,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Image metadata could not be saved." }, { status: 500 });
   }
 
-  const publicUrl = supabase.storage.from(bucketName).getPublicUrl(storagePath).data.publicUrl;
-  return NextResponse.json({ src: publicUrl, alt: sanitizeFilename(file.name), storagePath });
+  const fileId = (metadata as { id: string }).id;
+  return NextResponse.json({
+    src: `/api/files/note-image?fileId=${encodeURIComponent(fileId)}`,
+    alt: sanitizeFilename(file.name),
+    fileId
+  });
 }
 
 async function logRejectedUpload(

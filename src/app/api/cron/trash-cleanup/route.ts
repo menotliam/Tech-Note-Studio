@@ -8,7 +8,15 @@ import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/
 
 const retentionMs = 30 * 24 * 60 * 60 * 1000;
 
+export async function GET(request: NextRequest) {
+  return handleTrashCleanupRequest(request);
+}
+
 export async function POST(request: NextRequest) {
+  return handleTrashCleanupRequest(request);
+}
+
+async function handleTrashCleanupRequest(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = request.headers.get("authorization");
 

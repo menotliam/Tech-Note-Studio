@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { emptyEditorDocument } from "@/modules/editor/editor-documents";
-import { extractPlainTextFromEditorJson } from "@/modules/editor/editor-text-extractor";
 import { getAuthedFoundation } from "@/modules/notes/note.actions";
 import { hardDeleteTrashedFoldersByIds, hardDeleteTrashedNotesByIds } from "@/modules/notes/note-lifecycle.service";
 import {
@@ -336,7 +335,6 @@ export async function createNoteInFolderAction(formData: FormData) {
   const folderId = folderIdSchema.parse(formData.get("folderId"));
   const { supabase, user, workspaceId } = await getAuthedFoundation();
   await assertOwnedFolder(supabase, user.id, folderId);
-  const contentText = extractPlainTextFromEditorJson(emptyEditorDocument);
 
   const { data, error } = await supabase
     .from("notes")
@@ -345,7 +343,7 @@ export async function createNoteInFolderAction(formData: FormData) {
       owner_id: user.id,
       title: "Untitled",
       content_json: emptyEditorDocument,
-      content_text: contentText,
+      content_text: null,
       schema_version: 1
     })
     .select("id")
