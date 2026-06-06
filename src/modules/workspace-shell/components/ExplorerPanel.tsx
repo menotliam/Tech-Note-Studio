@@ -60,6 +60,8 @@ import type { FolderSummary, TagSummary } from "@/modules/organization/organizat
 import { createNoteFromTemplateAction } from "@/modules/templates/template.actions";
 import type { TemplateSummary } from "@/modules/templates/template.types";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
+import { RichEmptyState } from "@/modules/states/components/RichEmptyState";
+import { stateCopy } from "@/modules/states/state-copy";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { removeOpenNoteTab } from "../open-tabs.client";
@@ -132,6 +134,7 @@ export function ExplorerPanel({
   const searchResults = useMemo(() => searchNotes(notes, searchQuery), [notes, searchQuery]);
   const activeTag = activeTagId ? tags.find((tag) => tag.id === activeTagId) ?? null : null;
   const activeTagNotes = activeTagId ? notes.filter((note) => note.tagIds.includes(activeTagId)) : [];
+  const explorerIsEmpty = visibleTree.folders.length === 0 && visibleTree.unfiledNotes.length === 0;
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
@@ -406,6 +409,15 @@ export function ExplorerPanel({
                 }}
               />
             ))}
+            {explorerIsEmpty ? (
+              <RichEmptyState
+                compact
+                kind={workspaceView === "archive" ? "archive" : workspaceView === "trash" ? "trash" : "explorer"}
+                title={stateCopy.explorerEmpty(workspaceView).title}
+                description={stateCopy.explorerEmpty(workspaceView).description}
+                className="mt-2"
+              />
+            ) : null}
           </div>
           {dragItem ? <ExplorerDragGhost item={dragItem} dropTarget={dropTarget} /> : null}
         </section>
@@ -438,36 +450,55 @@ export function ExplorerPanel({
                   />
                 ))
               ) : (
-                <p className="px-2 text-xs text-muted-foreground">No matching notes.</p>
+                <RichEmptyState
+                  compact
+                  kind="search"
+                  title={stateCopy.searchEmpty(searchQuery).title}
+                  description={stateCopy.searchEmpty(searchQuery).description}
+                />
               )
             ) : (
-              <p className="px-2 text-xs text-muted-foreground">Type a query to search notes.</p>
+              <RichEmptyState
+                compact
+                kind="search"
+                title={stateCopy.searchIdle().title}
+                description={stateCopy.searchIdle().description}
+              />
             )}
           </div>
         </section>
 
         <section data-activity-panel="templates" className="hidden space-y-3">
           <PanelTitle icon={<FileText size={14} />} title="Templates" />
-          <form action={createNoteFromTemplateAction} className="rounded-md border border-border bg-background p-3">
-            <select
-              name="templateId"
-              className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground"
-              required
-              defaultValue=""
-            >
-              <option value="" disabled>
-                Choose template
-              </option>
-              {templates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
+          {templates.length > 0 ? (
+            <form action={createNoteFromTemplateAction} className="rounded-md border border-border bg-background p-3">
+              <select
+                name="templateId"
+                className="h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-foreground"
+                required
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  Choose template
                 </option>
-              ))}
-            </select>
-            <button className="mt-3 w-full rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
-              Create
-            </button>
-          </form>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+              <button className="mt-3 w-full rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
+                Create
+              </button>
+            </form>
+          ) : (
+            <RichEmptyState
+              compact
+              kind="template"
+              title={stateCopy.templatesEmpty().title}
+              description={stateCopy.templatesEmpty().description}
+            />
+          )}
         </section>
 
         <section data-activity-panel="tags" className="hidden space-y-3">
@@ -486,19 +517,28 @@ export function ExplorerPanel({
             </div>
           </form>
           <div className="space-y-1">
-            {tags.map((tag) => (
-              <TagExplorerRow
-                key={tag.id}
-                tag={tag}
-                active={activeTagId === tag.id}
-                onRequestDelete={setTagPendingDelete}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  setContextMenu({ type: "tag", tag, x: event.clientX, y: event.clientY });
-                }}
+            {tags.length > 0 ? (
+              tags.map((tag) => (
+                <TagExplorerRow
+                  key={tag.id}
+                  tag={tag}
+                  active={activeTagId === tag.id}
+                  onRequestDelete={setTagPendingDelete}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setContextMenu({ type: "tag", tag, x: event.clientX, y: event.clientY });
+                  }}
+                />
+              ))
+            ) : (
+              <RichEmptyState
+                compact
+                kind="tag"
+                title={stateCopy.tagsEmpty().title}
+                description={stateCopy.tagsEmpty().description}
               />
-            ))}
+            )}
           </div>
           {activeTag ? (
             <div className="space-y-2 border-t border-border pt-3">
@@ -525,18 +565,38 @@ export function ExplorerPanel({
                     />
                   ))
                 ) : (
-                  <p className="px-2 text-xs text-muted-foreground">No notes use this tag.</p>
+                  <RichEmptyState
+                    compact
+                    kind="tag"
+                    title={stateCopy.tagNoNotes(activeTag.name).title}
+                    description={stateCopy.tagNoNotes(activeTag.name).description}
+                  />
                 )}
               </div>
             </div>
           ) : (
-            <p className="px-2 text-xs text-muted-foreground">Select a tag to see applied notes.</p>
+            <RichEmptyState
+              compact
+              kind="tag"
+              title={stateCopy.tagSelectPrompt().title}
+              description={stateCopy.tagSelectPrompt().description}
+            />
           )}
         </section>
 
         <section data-activity-panel="export" className="hidden">
           <PanelTitle icon={<Upload size={14} />} title="Export Cart" />
-          {notes.length > 0 ? <MultiNoteExportForm notes={notes} /> : null}
+          {notes.length > 0 ? (
+            <MultiNoteExportForm notes={notes} />
+          ) : (
+            <RichEmptyState
+              compact
+              kind="export"
+              title={stateCopy.exportEmpty().title}
+              description={stateCopy.exportEmpty().description}
+              className="mt-3"
+            />
+          )}
         </section>
       </div>
 

@@ -5,6 +5,8 @@ import { Download, GripVertical, Loader2, X } from "lucide-react";
 import type { NoteSummary } from "@/modules/notes/note.types";
 import { notificationCopy } from "@/modules/notifications/notification-copy";
 import { notify } from "@/modules/notifications/notification.service";
+import { RichEmptyState } from "@/modules/states/components/RichEmptyState";
+import { stateCopy } from "@/modules/states/state-copy";
 
 type ExportMode = "bundle" | "zip";
 
@@ -79,7 +81,15 @@ export function MultiNoteExportForm({ notes }: { notes: NoteSummary[] }) {
             ))}
           </div>
         </div>
-      ) : null}
+      ) : (
+        <RichEmptyState
+          compact
+          kind="export"
+          title={stateCopy.exportCartEmpty().title}
+          description={stateCopy.exportCartEmpty().description}
+          className="mb-3 border-border bg-surface/80"
+        />
+      )}
 
       <div className="max-h-40 space-y-2 overflow-y-auto pr-1">
         {notes.map((note) => (
