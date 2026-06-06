@@ -72,6 +72,11 @@ export function ActivityBar({
   }
 
   useEffect(() => {
+    setActiveActivity(initialActivity);
+    setWorkspaceAttribute("data-active-activity", initialActivity);
+  }, [initialActivity, setWorkspaceAttribute]);
+
+  useEffect(() => {
     function handleToggleFocusMode() {
       setFocusMode((currentFocusMode) => {
         const nextFocusMode = !currentFocusMode;

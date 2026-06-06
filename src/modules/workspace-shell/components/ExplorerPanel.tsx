@@ -115,6 +115,7 @@ export function ExplorerPanel({
   searchQuery,
   activeFolderId,
   activeTagId,
+  activeExplorerTagId,
   workspace,
   workspaceView = "active"
 }: {
@@ -126,14 +127,23 @@ export function ExplorerPanel({
   searchQuery: string;
   activeFolderId?: string;
   activeTagId?: string;
+  activeExplorerTagId?: string;
   workspace: WorkspaceSummary;
   workspaceView?: "active" | "archive" | "trash";
 }) {
-  const tree = buildFolderTree(folders, notes);
-  const visibleTree = workspaceView === "active" ? tree : filterEmptyFolders(tree);
+  const explorerNotes = useMemo(
+    () => filterExplorerNotes(notes, { folderId: activeFolderId, tagId: activeExplorerTagId }),
+    [notes, activeFolderId, activeExplorerTagId]
+  );
+  const tree = useMemo(() => buildFolderTree(folders, explorerNotes), [folders, explorerNotes]);
+  const visibleTree =
+    workspaceView === "active" && !activeFolderId && !activeExplorerTagId ? tree : filterEmptyFolders(tree);
   const searchResults = useMemo(() => searchNotes(notes, searchQuery), [notes, searchQuery]);
   const activeTag = activeTagId ? tags.find((tag) => tag.id === activeTagId) ?? null : null;
   const activeTagNotes = activeTagId ? notes.filter((note) => note.tagIds.includes(activeTagId)) : [];
+  const activeExplorerTag = activeExplorerTagId
+    ? tags.find((tag) => tag.id === activeExplorerTagId) ?? null
+    : null;
   const explorerIsEmpty = visibleTree.folders.length === 0 && visibleTree.unfiledNotes.length === 0;
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
@@ -331,6 +341,10 @@ export function ExplorerPanel({
             requestConfirm={setConfirmAction}
           />
 
+          {workspaceView === "active" && tags.length > 0 ? (
+            <ExplorerTagFilter tags={tags} activeTagId={activeExplorerTagId} activeFolderId={activeFolderId} />
+          ) : null}
+
           {creatingFolder && workspaceView === "active" ? (
             <form
               action={createFolderAction}
@@ -373,6 +387,7 @@ export function ExplorerPanel({
                 tags={tags}
                 selectedNoteId={selectedNote?.id}
                 activeFolderId={activeFolderId}
+                activeExplorerTagId={activeExplorerTagId}
                 workspaceView={workspaceView}
                 collapsedFolders={collapsedFolders}
                 setCollapsedFolders={setCollapsedFolders}
@@ -413,8 +428,12 @@ export function ExplorerPanel({
               <RichEmptyState
                 compact
                 kind={workspaceView === "archive" ? "archive" : workspaceView === "trash" ? "trash" : "explorer"}
-                title={stateCopy.explorerEmpty(workspaceView).title}
-                description={stateCopy.explorerEmpty(workspaceView).description}
+                title={activeExplorerTag ? `No notes tagged ${activeExplorerTag.name}` : stateCopy.explorerEmpty(workspaceView).title}
+                description={
+                  activeExplorerTag
+                    ? "Choose another tag filter or clear the current filter to return to all notes."
+                    : stateCopy.explorerEmpty(workspaceView).description
+                }
                 className="mt-2"
               />
             ) : null}
@@ -523,6 +542,11 @@ export function ExplorerPanel({
                   key={tag.id}
                   tag={tag}
                   active={activeTagId === tag.id}
+                  href={buildTagSectionHref({
+                    tagId: activeTagId === tag.id ? undefined : tag.id,
+                    folderId: activeFolderId,
+                    explorerTagId: activeExplorerTagId
+                  })}
                   onRequestDelete={setTagPendingDelete}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -629,6 +653,7 @@ function FolderNode({
   tags,
   selectedNoteId,
   activeFolderId,
+  activeExplorerTagId,
   workspaceView,
   collapsedFolders,
   setCollapsedFolders,
@@ -647,6 +672,7 @@ function FolderNode({
   tags: TagSummary[];
   selectedNoteId?: string;
   activeFolderId?: string;
+  activeExplorerTagId?: string;
   workspaceView: "active" | "archive" | "trash";
   collapsedFolders: Set<string>;
   setCollapsedFolders: (value: Set<string>) => void;
@@ -741,7 +767,7 @@ function FolderNode({
     >
       <div className="grid grid-cols-[minmax(0,1fr)_24px] items-center">
         <ExplorerLink
-          href={workspaceView === "active" ? `/?folder=${folder.id}` : undefined}
+          href={workspaceView === "active" ? buildExplorerHref({ folderId: folder.id, tagId: activeExplorerTagId }) : undefined}
           label={folder.name}
           active={activeFolderId === folder.id}
           icon={<Folder size={14} />}
@@ -777,6 +803,7 @@ function FolderNode({
               tags={tags}
               selectedNoteId={selectedNoteId}
               activeFolderId={activeFolderId}
+              activeExplorerTagId={activeExplorerTagId}
               workspaceView={workspaceView}
               collapsedFolders={collapsedFolders}
               setCollapsedFolders={setCollapsedFolders}
@@ -1336,20 +1363,129 @@ function ExplorerLink({
   );
 }
 
+function ExplorerTagFilter({
+  tags,
+  activeTagId,
+  activeFolderId
+}: {
+  tags: TagSummary[];
+  activeTagId?: string;
+  activeFolderId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const activeTag = activeTagId ? tags.find((tag) => tag.id === activeTagId) ?? null : null;
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function closeOnPointerDown(event: PointerEvent) {
+      if (menuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setOpen(false);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnPointerDown, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative px-2">
+      <button
+        type="button"
+        className="flex h-8 w-full items-center gap-2 rounded-md border border-border bg-background px-2 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Tags size={13} />
+        <span className="min-w-0 flex-1 truncate text-left">
+          {activeTag ? activeTag.name : "Filter by tag"}
+        </span>
+        {activeTag ? (
+          <span
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ backgroundColor: activeTag.color ?? "hsl(var(--muted-foreground))" }}
+          />
+        ) : null}
+        <ChevronDown size={13} className={open ? "rotate-180 transition" : "transition"} />
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          className="absolute left-2 right-2 z-40 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-panel-strong p-1 shadow-2xl"
+        >
+          <Link
+            href={buildExplorerHref({ folderId: activeFolderId })}
+            role="menuitem"
+            className={
+              "flex h-8 items-center gap-2 rounded-md px-2 text-xs transition " +
+              (!activeTagId ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
+            }
+            onClick={() => setOpen(false)}
+          >
+            <span className="h-2 w-2 rounded-full border border-border" />
+            All notes
+          </Link>
+          {tags.map((tag) => {
+            const active = activeTagId === tag.id;
+
+            return (
+              <Link
+                key={tag.id}
+                href={buildExplorerHref({ folderId: activeFolderId, tagId: active ? undefined : tag.id })}
+                role="menuitem"
+                className={
+                  "flex h-8 items-center gap-2 rounded-md px-2 text-xs transition " +
+                  (active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
+                }
+                title={active ? `Clear ${tag.name} filter` : `Filter notes by ${tag.name}`}
+                onClick={() => setOpen(false)}
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: tag.color ?? "hsl(var(--muted-foreground))" }}
+                />
+                <span className="min-w-0 truncate">{tag.name}</span>
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function TagExplorerRow({
   tag,
   active,
+  href,
   onRequestDelete,
   onContextMenu
 }: {
   tag: TagSummary;
   active: boolean;
+  href: string;
   onRequestDelete: (tag: TagSummary) => void;
   onContextMenu: (event: MouseEvent) => void;
 }) {
   return (
     <div className="group grid grid-cols-[minmax(0,1fr)_28px] items-center gap-1" onContextMenu={onContextMenu}>
-      <ExplorerLink href={`/?tag=${tag.id}`} label={tag.name} active={active} color={tag.color} />
+      <ExplorerLink href={href} label={tag.name} active={active} color={tag.color} />
       <button
         type="button"
         className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground opacity-70 transition hover:bg-red-500/10 hover:text-red-400 group-hover:opacity-100"
@@ -1615,11 +1751,68 @@ function searchNotes(notes: NoteSummary[], searchQuery: string) {
   );
 }
 
+function filterExplorerNotes(
+  notes: NoteSummary[],
+  filters: {
+    folderId?: string;
+    tagId?: string;
+  }
+) {
+  return notes.filter((note) => {
+    if (filters.folderId && note.folderId !== filters.folderId) {
+      return false;
+    }
+
+    if (filters.tagId && !note.tagIds.includes(filters.tagId)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
 function filterEmptyFolders(tree: { folders: FolderTreeNode[]; unfiledNotes: NoteSummary[] }) {
   return {
     folders: tree.folders.map(filterFolderNode).filter((folder): folder is FolderTreeNode => Boolean(folder)),
     unfiledNotes: tree.unfiledNotes
   };
+}
+
+function buildExplorerHref({ folderId, tagId }: { folderId?: string; tagId?: string }) {
+  return buildHomeHref({
+    folder: folderId,
+    explorerTag: tagId
+  });
+}
+
+function buildTagSectionHref({
+  tagId,
+  folderId,
+  explorerTagId
+}: {
+  tagId?: string;
+  folderId?: string;
+  explorerTagId?: string;
+}) {
+  return buildHomeHref({
+    panel: "tags",
+    tag: tagId,
+    folder: folderId,
+    explorerTag: explorerTagId
+  });
+}
+
+function buildHomeHref(params: Record<string, string | undefined>) {
+  const searchParams = new URLSearchParams();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value) {
+      searchParams.set(key, value);
+    }
+  });
+
+  const query = searchParams.toString();
+  return query ? `/?${query}` : "/";
 }
 
 function filterFolderNode(folder: FolderTreeNode): FolderTreeNode | null {

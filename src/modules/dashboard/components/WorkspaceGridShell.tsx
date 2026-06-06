@@ -28,6 +28,7 @@ export function WorkspaceGridShell({
   searchQuery,
   activeFolderId,
   activeTagId,
+  activeExplorerTagId,
   workspaceView,
   children
 }: {
@@ -43,6 +44,7 @@ export function WorkspaceGridShell({
   searchQuery: string;
   activeFolderId?: string;
   activeTagId?: string;
+  activeExplorerTagId?: string;
   workspaceView: "active" | "archive" | "trash";
   children: ReactNode;
 }) {
@@ -115,6 +117,7 @@ export function WorkspaceGridShell({
         searchQuery={searchQuery}
         activeFolderId={activeFolderId}
         activeTagId={activeTagId}
+        activeExplorerTagId={activeExplorerTagId}
         workspace={workspace}
         workspaceView={workspaceView}
       />

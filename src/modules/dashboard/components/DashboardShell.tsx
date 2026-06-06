@@ -30,6 +30,8 @@ export function DashboardShell({
   searchQuery = "",
   activeFolderId,
   activeTagId,
+  activeExplorerTagId,
+  requestedActivity,
   workspaceView = "active"
 }: {
   userEmail: string;
@@ -44,6 +46,8 @@ export function DashboardShell({
   searchQuery?: string;
   activeFolderId?: string;
   activeTagId?: string;
+  activeExplorerTagId?: string;
+  requestedActivity?: WorkspaceActivity;
   workspaceView?: "active" | "archive" | "trash";
 }) {
   const currentNoteForChrome = selectedNote
@@ -54,7 +58,7 @@ export function DashboardShell({
     : null;
   const outlineItems = extractOutlineItems(currentNoteForChrome);
   const splitOutlineItems = extractOutlineItems(splitNoteForChrome);
-  const initialActivity: WorkspaceActivity = searchQuery ? "search" : activeTagId ? "tags" : "explorer";
+  const initialActivity: WorkspaceActivity = requestedActivity ?? (searchQuery ? "search" : activeTagId ? "tags" : "explorer");
 
   return (
     <main
@@ -77,6 +81,7 @@ export function DashboardShell({
         searchQuery={searchQuery}
         activeFolderId={activeFolderId}
         activeTagId={activeTagId}
+        activeExplorerTagId={activeExplorerTagId}
         workspaceView={workspaceView}
       >
         <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background" data-editor-workbench>

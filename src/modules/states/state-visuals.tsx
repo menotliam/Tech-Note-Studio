@@ -42,8 +42,6 @@ export function StateVisual({ kind, className }: { kind: StateVisualKind; classN
     <div
       className={cn(
         "relative grid h-14 w-14 place-items-center rounded-md border border-border bg-surface shadow-sm",
-        "before:absolute before:inset-x-2 before:top-3 before:h-px before:bg-primary/35",
-        "after:absolute after:inset-x-3 after:bottom-3 after:h-px after:bg-muted-foreground/20",
         className
       )}
       aria-hidden="true"
