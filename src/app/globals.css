@@ -353,6 +353,7 @@ select {
 
 @media (max-width: 1023px) {
   [data-ide-shell="true"] {
+    grid-template-columns: minmax(0, 1fr) !important;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
   }
 
@@ -363,6 +364,28 @@ select {
     border-bottom: 1px solid hsl(var(--border));
     border-right: 0;
     overflow-x: auto;
+  }
+
+  [data-ide-shell="true"] [data-editor-workbench] {
+    grid-column: 1 / -1;
+  }
+
+  [data-ide-shell="true"]:not([data-focus-mode="true"]):not([data-explorer-collapsed="true"]) [data-explorer-panel] {
+    display: block;
+    min-height: 0;
+    overflow: hidden;
+    border-right: 0;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  [data-ide-shell="true"] [data-explorer-panel] > :last-child {
+    height: min(38vh, 360px);
+  }
+
+  [data-ide-shell="true"][data-focus-mode="true"],
+  [data-ide-shell="true"][data-explorer-collapsed="true"] {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   [data-explorer-panel],

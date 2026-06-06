@@ -95,9 +95,9 @@ export function ActivityBar({
   }, [setWorkspaceAttribute]);
 
   return (
-    <div className="flex h-full w-14 flex-col items-center border-r border-border bg-panel-strong py-3">
+    <div className="flex h-14 w-full flex-row items-center overflow-x-auto overflow-y-visible border-b border-border bg-panel-strong px-3 lg:h-full lg:w-14 lg:flex-col lg:overflow-visible lg:border-b-0 lg:border-r lg:px-0 lg:py-3">
       <div
-        className="mb-4 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-[image:var(--accent-gradient)] text-xs font-bold text-primary-foreground shadow-[0_0_24px_hsl(var(--primary)/0.25)]"
+        className="mr-3 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-[image:var(--accent-gradient)] text-xs font-bold text-primary-foreground shadow-[0_0_24px_hsl(var(--primary)/0.25)] lg:mb-4 lg:mr-0"
         style={{
           background: workspaceCover?.value,
           borderColor: workspaceAccent ? `hsl(${workspaceAccent.primary})` : undefined
@@ -107,7 +107,7 @@ export function ActivityBar({
         {getWorkspaceIconLabel(workspace)}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2">
+      <div className="flex flex-1 flex-row gap-2 lg:flex-col">
         {activities.map((activity) => {
           const Icon = activity.icon;
           const active = activeActivity === activity.id;
@@ -117,7 +117,7 @@ export function ActivityBar({
               <Link
                 key={activity.id}
                 href="/settings"
-                className="relative inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                className="relative inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-muted hover:text-foreground"
                 aria-label={activity.label}
                 title={activity.label}
               >
@@ -131,10 +131,11 @@ export function ActivityBar({
               key={activity.id}
               type="button"
               className={
-                "relative inline-flex h-10 w-10 items-center justify-center rounded-md transition " +
+                "relative inline-flex h-10 w-10 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
                 (active ? "text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
               }
               aria-label={activity.label}
+              aria-pressed={active}
               title={activity.label}
               onClick={() => updateActivity(activity.id)}
             >
@@ -152,10 +153,11 @@ export function ActivityBar({
         <button
           type="button"
           className={
-            "inline-flex h-10 w-10 items-center justify-center rounded-md transition " +
+            "inline-flex h-10 w-10 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
             (focusMode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground")
           }
           aria-label="Toggle focus mode"
+          aria-pressed={focusMode}
           title="Focus mode"
           onClick={() => updateFocusMode(!focusMode)}
         >
@@ -163,7 +165,7 @@ export function ActivityBar({
         </button>
       </div>
 
-      <div className="mt-auto flex flex-col items-center gap-2">
+      <div className="ml-auto flex flex-row items-center gap-2 lg:ml-0 lg:mt-auto lg:flex-col">
         <ThemeQuickSwitch initialTheme={preferences.appearance.theme} />
         <ActivityUserMenu userEmail={userEmail} />
       </div>

@@ -27,6 +27,8 @@ import {
 import { syncThemePreference } from "@/modules/preferences/preferences.theme";
 import { notificationCopy } from "@/modules/notifications/notification-copy";
 import { notify } from "@/modules/notifications/notification.service";
+import { SecurityActivityPage } from "@/modules/security-activity/components/SecurityActivityPage";
+import type { SecurityActivityLoadResult } from "@/modules/security-activity/security-activity.types";
 import { updateWorkspacePersonalizationAction } from "@/modules/workspace/workspace.actions";
 import { workspaceIconValues } from "@/modules/workspace/workspace.schemas";
 import type { WorkspaceSummary } from "@/modules/workspace/workspace.types";
@@ -48,10 +50,12 @@ const sections: Array<{ id: SettingsSection; label: string }> = [
 
 export function SettingsShell({
   initialPreferences,
+  securityActivity,
   workspace,
   userEmail
 }: {
   initialPreferences: UserPreferences;
+  securityActivity: SecurityActivityLoadResult;
   workspace: WorkspaceSummary;
   userEmail: string;
 }) {
@@ -123,11 +127,12 @@ export function SettingsShell({
                 key={section.id}
                 type="button"
                 className={
-                  "flex w-full rounded-md px-3 py-2 text-left text-sm transition " +
+                  "flex w-full rounded-md px-3 py-2 text-left text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
                   (activeSection === section.id
                     ? "bg-muted font-medium text-foreground shadow-[inset_3px_0_0_hsl(var(--primary))]"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground")
                 }
+                aria-current={activeSection === section.id ? "page" : undefined}
                 onClick={() => setActiveSection(section.id)}
               >
                 {section.label}
@@ -161,9 +166,7 @@ export function SettingsShell({
             <ExportSettings preferences={preferences} updatePreferences={updatePreferences} />
           ) : null}
           {activeSection === "account" ? <ShallowPanel title="Signed in as" value={userEmail} /> : null}
-          {activeSection === "security" ? (
-            <ShallowPanel title="Security events" value="Security logging is active for protected workflows." />
-          ) : null}
+          {activeSection === "security" ? <SecurityActivityPage result={securityActivity} /> : null}
           {activeSection === "storage" ? (
             <ShallowPanel title="Upload limits" value="PNG, JPEG, and WebP images up to 10 MB." />
           ) : null}
@@ -219,7 +222,7 @@ function WorkspaceSettings({
             <span className="font-medium">Name</span>
             <input
               name="name"
-              className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary"
+              className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
               value={workspace.name}
               maxLength={80}
               required
@@ -269,7 +272,7 @@ function WorkspaceSettings({
       </SettingsPanel>
 
       <div>
-        <button className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">
+        <button className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
           Save Workspace
         </button>
       </div>
@@ -287,7 +290,7 @@ function AppearanceSettings({
   return (
     <div className="grid gap-5">
       <SettingsPanel title="Theme">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <ThemeButton
             label="System"
             icon={<Monitor size={16} />}
@@ -310,7 +313,7 @@ function AppearanceSettings({
       </SettingsPanel>
 
       <SettingsPanel title="Motion">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {reducedMotionPreferenceValues.map((value) => (
             <MotionButton
               key={value}
@@ -323,13 +326,13 @@ function AppearanceSettings({
       </SettingsPanel>
 
       <SettingsPanel title="Accent">
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:grid-cols-3">
           {accentPresetDefinitions.map((preset) => (
             <button
               key={preset.id}
               type="button"
               className={
-                "flex h-12 items-center gap-3 rounded-md border px-3 text-sm transition " +
+                "flex min-h-12 items-center gap-3 rounded-md border px-3 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
                 (preferences.appearance.accentPreset === preset.id
                   ? "border-primary bg-muted text-foreground"
                   : "border-border text-muted-foreground hover:border-primary hover:text-foreground")
@@ -350,7 +353,7 @@ function AppearanceSettings({
               key={preset.id}
               type="button"
               className={
-                "h-14 rounded-md border text-sm transition " +
+                "h-14 rounded-md border text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
                 (preferences.appearance.gradientPreset === preset.id ? "border-primary" : "border-border")
               }
               style={{ background: preset.value }}
@@ -378,7 +381,7 @@ function MotionButton({
     <button
       type="button"
       className={
-        "flex h-10 items-center justify-center rounded-md border text-sm transition " +
+        "flex min-h-10 items-center justify-center rounded-md border px-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
         (active
           ? "border-primary bg-muted font-medium text-foreground"
           : "border-border text-muted-foreground hover:border-primary hover:text-foreground")
@@ -578,7 +581,7 @@ function KeybindingsSettings({
                 <button
                   type="button"
                   className={
-                    "h-9 rounded-md border bg-panel px-3 text-left font-mono text-sm outline-none transition focus:border-primary " +
+                    "h-9 rounded-md border bg-panel px-3 text-left font-mono text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/25 " +
                     (capturingCommandId === command.id ? "border-primary text-primary" : "border-border")
                   }
                   onClick={() => {
@@ -601,7 +604,7 @@ function KeybindingsSettings({
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground"
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             onClick={() => {
               void saveKeybindings();
             }}
@@ -611,7 +614,7 @@ function KeybindingsSettings({
           </button>
           <button
             type="button"
-            className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:bg-muted hover:text-foreground"
             onClick={() => {
               void resetKeybindings();
             }}
@@ -667,7 +670,7 @@ function ThemeButton({
     <button
       type="button"
       className={
-        "flex h-12 items-center justify-center gap-2 rounded-md border text-sm transition " +
+        "flex min-h-12 items-center justify-center gap-2 rounded-md border px-2 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary " +
         (active
           ? "border-primary bg-muted font-medium text-foreground"
           : "border-border text-muted-foreground hover:border-primary hover:text-foreground")
@@ -695,7 +698,7 @@ function SelectField<T extends string>({
     <label className="grid gap-1.5 text-sm">
       <span className="font-medium">{label}</span>
       <select
-        className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary"
+        className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
         value={value}
         onChange={(event) => onChange(event.target.value as T)}
       >
@@ -727,7 +730,7 @@ function FormSelectField<T extends string>({
       <span className="font-medium">{label}</span>
       <select
         name={name}
-        className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary"
+        className="h-10 rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
         value={value}
         onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value as T)}
       >

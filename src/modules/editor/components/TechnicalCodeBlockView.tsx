@@ -122,7 +122,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
   return (
     <NodeViewWrapper
       ref={codeBlockRef}
-      className="technical-code-block overflow-hidden rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] shadow-xl shadow-black/15"
+      className="technical-code-block isolate overflow-hidden rounded-md border border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))] shadow-xl shadow-black/15"
       data-language-family={languageAccent.family}
       style={accentStyle}
     >
@@ -231,7 +231,7 @@ export function TechnicalCodeBlockView({ node, updateAttributes, deleteNode }: N
             <div
               aria-hidden
               contentEditable={false}
-              className="pointer-events-none absolute inset-y-0 left-0 z-10 w-10 select-none border-r border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))]/90 py-4 pr-2 text-right font-mono text-sm leading-6 text-[hsl(var(--code-block-muted))]"
+              className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-10 select-none border-r border-[hsl(var(--code-block-border))] bg-[hsl(var(--code-block-background))]/90 py-4 pr-2 text-right font-mono text-sm leading-6 text-[hsl(var(--code-block-muted))]"
             >
               {lineNumbers.map((lineNumber) => (
                 <span key={lineNumber} className="block h-6 tabular-nums">

@@ -768,7 +768,7 @@ export function RichNoteEditor({
       <input type="hidden" name="contentJson" value={contentJson} />
       <input type="hidden" name="contentText" value={contentText} />
 
-      <div className="sticky top-0 z-10 flex min-h-11 items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-2 py-1.5 backdrop-blur">
+      <div className="sticky top-0 z-30 flex min-h-11 items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-2 py-1.5 shadow-sm backdrop-blur">
         <label className="mr-1 inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border bg-panel px-2 text-xs text-muted-foreground">
           <input
             type="checkbox"
