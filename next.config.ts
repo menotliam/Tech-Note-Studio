@@ -15,6 +15,9 @@ const contentSecurityPolicy = [
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  outputFileTracingIncludes: {
+    "/api/export": ["./assets/fonts/**/*.ttf"]
+  },
   async headers() {
     return [
       {
