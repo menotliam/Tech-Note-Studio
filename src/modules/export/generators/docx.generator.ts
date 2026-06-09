@@ -16,7 +16,7 @@ import {
   TextRun,
   WidthType
 } from "docx";
-import type { ExportBlock, ExportBundle, ExportDocument } from "../export.types";
+import type { ExportBlock, ExportBundle, ExportDocument, ExportTextContent } from "../export.types";
 
 const bodySpacing = {
   before: 80,
@@ -120,16 +120,24 @@ function blockToDocx(block: ExportBlock): Array<Paragraph | Table> {
               : block.level === 2
                 ? HeadingLevel.HEADING_2
                 : HeadingLevel.HEADING_3,
+          alignment: getDocxParagraphAlignment(block.alignment),
           spacing: { before: 160, after: 100 },
-          children: [new TextRun(block.text)]
+          children: textContentToDocxRuns(block)
         })
       ];
     case "paragraph":
-      return [new Paragraph({ children: [new TextRun(block.text)], spacing: bodySpacing })];
+      return [
+        new Paragraph({
+          alignment: getDocxParagraphAlignment(block.alignment),
+          children: textContentToDocxRuns(block),
+          spacing: bodySpacing
+        })
+      ];
     case "quote":
       return [
         new Paragraph({
-          children: [new TextRun({ text: block.text, italics: true })],
+          alignment: getDocxParagraphAlignment(block.alignment),
+          children: textContentToDocxRuns(block, { italics: true }),
           indent: { left: 360 },
           spacing: bodySpacing
         })
@@ -151,15 +159,17 @@ function blockToDocx(block: ExportBlock): Array<Paragraph | Table> {
     case "list":
       return block.items.map(
         (item, index) =>
-          block.ordered
+          (item.ordered ?? block.ordered)
             ? new Paragraph({
-                children: [new TextRun(item)],
-                numbering: { reference: "ordered-list", level: 0 },
+                children: textContentToDocxRuns(item),
+                numbering: { reference: "ordered-list", level: Math.min(item.depth ?? 0, 4) },
+                alignment: getDocxParagraphAlignment(item.alignment),
                 spacing: index === block.items.length - 1 ? bodySpacing : { after: 60 }
               })
             : new Paragraph({
-                children: [new TextRun(item)],
-                bullet: { level: 0 },
+                children: textContentToDocxRuns(item),
+                bullet: { level: Math.min(item.depth ?? 0, 4) },
+                alignment: getDocxParagraphAlignment(item.alignment),
                 spacing: index === block.items.length - 1 ? bodySpacing : { after: 60 }
               })
       );
@@ -171,8 +181,9 @@ function blockToDocx(block: ExportBlock): Array<Paragraph | Table> {
               new CheckBox({
                 checked: item.checked
               }),
-              new TextRun(` ${item.text}`)
+              ...prefixTextContentRuns(item, " ")
             ],
+            alignment: getDocxParagraphAlignment(item.alignment),
             spacing: bodySpacing
           })
       );
@@ -310,6 +321,43 @@ function getDocxImageAlignment(alignment: Extract<ExportBlock, { type: "image" }
   return AlignmentType.CENTER;
 }
 
+function getDocxParagraphAlignment(alignment: ExportTextContent["alignment"]) {
+  if (alignment === "center") {
+    return AlignmentType.CENTER;
+  }
+
+  if (alignment === "right") {
+    return AlignmentType.RIGHT;
+  }
+
+  return AlignmentType.LEFT;
+}
+
+function textContentToDocxRuns(content: ExportTextContent, defaults?: { italics?: boolean }) {
+  const runs = content.runs?.length ? content.runs : [{ text: content.text }];
+
+  return runs.map(
+    (run) =>
+      new TextRun({
+        text: run.text || " ",
+        bold: run.bold,
+        italics: defaults?.italics || run.italic,
+        font: run.code ? "Consolas" : undefined
+      })
+  );
+}
+
+function prefixTextContentRuns(content: ExportTextContent, prefix: string) {
+  const runs = textContentToDocxRuns(content);
+  const [firstRun, ...restRuns] = runs;
+
+  if (!firstRun) {
+    return [new TextRun(prefix)];
+  }
+
+  return [new TextRun(prefix), firstRun, ...restRuns];
+}
+
 function normalizeDocxImage(data: Buffer, mimeType: string) {
   if (mimeType === "image/png") {
     return {
@@ -395,7 +443,7 @@ function codeToTextRuns(code: string) {
   });
 }
 
-function renderTable(rows: string[][]) {
+function renderTable(rows: ExportTextContent[][]) {
   return new Table({
     width: {
       size: 100,
@@ -409,8 +457,8 @@ function renderTable(rows: string[][]) {
               new TableCell({
                 children: [
                   new Paragraph({
-                    alignment: AlignmentType.LEFT,
-                    children: [new TextRun(cell)]
+                    alignment: getDocxParagraphAlignment(cell.alignment),
+                    children: textContentToDocxRuns(cell)
                   })
                 ]
               })

@@ -19,12 +19,31 @@ export type ExportImageAsset = {
   originalFilename: string | null;
 };
 
+export type ExportTextRun = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  code?: boolean;
+};
+
+export type ExportTextContent = {
+  text: string;
+  runs?: ExportTextRun[];
+  alignment?: "left" | "center" | "right";
+};
+
+export type ExportListItem = ExportTextContent & {
+  depth?: number;
+  ordered?: boolean;
+  marker?: string;
+};
+
 export type ExportBlock =
-  | { type: "heading"; level: 1 | 2 | 3; text: string }
-  | { type: "paragraph"; text: string }
-  | { type: "list"; ordered: boolean; items: string[] }
-  | { type: "checklist"; items: Array<{ checked: boolean; text: string }> }
-  | { type: "quote"; text: string }
+  | ({ type: "heading"; level: 1 | 2 | 3 } & ExportTextContent)
+  | ({ type: "paragraph" } & ExportTextContent)
+  | { type: "list"; ordered: boolean; items: ExportListItem[] }
+  | { type: "checklist"; items: Array<ExportTextContent & { checked: boolean }> }
+  | ({ type: "quote" } & ExportTextContent)
   | { type: "divider" }
   | { type: "code"; language: string; code: string }
   | {
@@ -37,4 +56,4 @@ export type ExportBlock =
       fileId?: string;
       asset?: ExportImageAsset;
     }
-  | { type: "table"; rows: string[][] };
+  | { type: "table"; rows: ExportTextContent[][] };

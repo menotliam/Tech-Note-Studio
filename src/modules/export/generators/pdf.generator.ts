@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { deflateSync, inflateSync } from "node:zlib";
-import type { ExportBlock, ExportBundle, ExportDocument } from "../export.types";
+import type { ExportBlock, ExportBundle, ExportDocument, ExportTextContent, ExportTextRun } from "../export.types";
 
 const page = {
   width: 595,
@@ -117,28 +117,31 @@ export async function generatePdfBundle(bundle: ExportBundle): Promise<Buffer> {
 function renderBlock(writer: PdfWriter, block: ExportBlock) {
   switch (block.type) {
     case "heading":
-      writer.text(block.text, {
+      writer.richText(block, {
         font: "F2",
         size: block.level === 1 ? 20 : block.level === 2 ? 16 : 13,
+        alignment: block.alignment,
         gapBefore: 8,
         gapAfter: 8
       });
       break;
     case "paragraph":
-      writer.text(block.text, { font: "F1", size: 11, gapAfter: 10 });
+      writer.richText(block, { font: "F1", size: 11, alignment: block.alignment, gapAfter: 10 });
       break;
     case "quote":
-      writer.text(block.text, { font: "F3", size: 11, indent: 18, gapAfter: 10 });
+      writer.richText(block, { font: "F3", size: 11, alignment: block.alignment, indent: 18, gapAfter: 10 });
       break;
     case "divider":
       writer.divider();
       break;
     case "list":
       block.items.forEach((item, index) => {
-        writer.text(`${block.ordered ? `${index + 1}.` : pdfBullet} ${item}`, {
+        const marker = (item.ordered ?? block.ordered) ? (item.marker ?? `${index + 1}.`) : pdfBullet;
+        writer.listItem(item, marker, {
           font: "F1",
           size: 11,
-          indent: 14,
+          alignment: item.alignment,
+          depth: item.depth ?? 0,
           gapAfter: 3
         });
       });
@@ -146,9 +149,10 @@ function renderBlock(writer: PdfWriter, block: ExportBlock) {
       break;
     case "checklist":
       block.items.forEach((item) => {
-        writer.text(`${item.checked ? pdfCheckedBox : pdfUncheckedBox} ${item.text}`, {
+        writer.richText(prefixTextContent(item, `${item.checked ? pdfCheckedBox : pdfUncheckedBox} `), {
           font: "F1",
           size: 11,
+          alignment: item.alignment,
           indent: 14,
           gapAfter: 3
         });
@@ -163,9 +167,22 @@ function renderBlock(writer: PdfWriter, block: ExportBlock) {
       writer.image(block);
       break;
     case "table":
-      writer.table(block.rows, { font: "F1", size: 9, gapAfter: 12 });
+      writer.table(
+        block.rows.map((row) => row.map((cell) => cell.text)),
+        { font: "F1", size: 9, gapAfter: 12 }
+      );
       break;
   }
+}
+
+function prefixTextContent(content: ExportTextContent, prefix: string): ExportTextContent {
+  const runs = content.runs?.length ? content.runs : [{ text: content.text }];
+
+  return {
+    ...content,
+    text: `${prefix}${content.text}`,
+    runs: [{ text: prefix }, ...runs]
+  };
 }
 
 class PdfWriter {
@@ -185,6 +202,7 @@ class PdfWriter {
     options: {
       font: FontName;
       size: number;
+      alignment?: ExportTextContent["alignment"];
       indent?: number;
       gapBefore?: number;
       gapAfter?: number;
@@ -200,7 +218,8 @@ class PdfWriter {
 
     lines.forEach((line) => {
       this.ensureSpace(options.size + 5);
-      const x = page.margin + (options.indent ?? 0);
+      const textWidth = estimateTextWidth(line || " ", options.size);
+      const x = this.getTextX(textWidth, options.indent ?? 0, options.alignment);
       this.trackCharacters(line || " ");
       this.currentPage.commands.push(
         `BT /${options.font} ${options.size} Tf ${x} ${this.y} Td ${toPdfHexString(line || " ")} Tj ET`
@@ -210,12 +229,116 @@ class PdfWriter {
           rect: [
             x,
             this.y - 2,
-            x + estimateTextWidth(line || " ", options.size),
+            x + textWidth,
             this.y + options.size + 2
           ],
           destination: options.linkDestination
         });
       }
+      this.y -= options.size + 5;
+    });
+
+    this.gap(options.gapAfter ?? 0);
+  }
+
+  richText(
+    content: ExportTextContent,
+    options: {
+      font: FontName;
+      size: number;
+      alignment?: ExportTextContent["alignment"];
+      indent?: number;
+      gapBefore?: number;
+      gapAfter?: number;
+    }
+  ) {
+    const runs = content.runs?.length ? content.runs : [{ text: content.text }];
+    const lines = wrapRichText(runs, this.maxCharsPerLine(options.size, options.indent ?? 0));
+
+    this.gap(options.gapBefore ?? 0);
+
+    lines.forEach((lineRuns) => {
+      const lineText = lineRuns.map((run) => run.text).join("") || " ";
+      const lineWidth = estimateTextWidth(lineText, options.size);
+      let x = this.getTextX(lineWidth, options.indent ?? 0, options.alignment);
+
+      this.ensureSpace(options.size + 5);
+      this.trackCharacters(lineText);
+
+      lineRuns.forEach((run) => {
+        const text = run.text || " ";
+        const font = run.code ? "F4" : run.bold ? "F2" : run.italic ? "F3" : options.font;
+        this.currentPage.commands.push(
+          `BT /${font} ${options.size} Tf ${formatPdfNumber(x)} ${this.y} Td ${toPdfHexString(text)} Tj ET`
+        );
+
+        if (run.bold) {
+          this.currentPage.commands.push(
+            `BT /${font} ${options.size} Tf ${formatPdfNumber(x + 0.25)} ${this.y} Td ${toPdfHexString(text)} Tj ET`
+          );
+        }
+
+        x += estimateTextWidth(text, options.size);
+      });
+
+      this.y -= options.size + 5;
+    });
+
+    this.gap(options.gapAfter ?? 0);
+  }
+
+  listItem(
+    content: ExportTextContent,
+    marker: string,
+    options: {
+      font: FontName;
+      size: number;
+      alignment?: ExportTextContent["alignment"];
+      depth: number;
+      gapAfter?: number;
+    }
+  ) {
+    const markerIndent = Math.max(0, options.depth) * 18;
+    const markerWidth = 22 + Math.max(0, options.depth) * 4;
+    const textIndent = markerIndent + markerWidth;
+    const runs = content.runs?.length ? content.runs : [{ text: content.text }];
+    const lines = wrapRichText(runs, this.maxCharsPerLine(options.size, textIndent));
+
+    lines.forEach((lineRuns, lineIndex) => {
+      const lineText = lineRuns.map((run) => run.text).join("") || " ";
+      const lineWidth = estimateTextWidth(lineText, options.size);
+      const textX = this.getTextX(lineWidth, textIndent, options.alignment);
+
+      this.ensureSpace(options.size + 5);
+
+      if (lineIndex === 0) {
+        const markerText = marker || pdfBullet;
+        const markerX = page.margin + markerIndent;
+        this.trackCharacters(markerText);
+        this.currentPage.commands.push(
+          `BT /${options.font} ${options.size} Tf ${formatPdfNumber(markerX)} ${this.y} Td ${toPdfHexString(markerText)} Tj ET`
+        );
+      }
+
+      this.trackCharacters(lineText);
+      let x = textX;
+
+      lineRuns.forEach((run) => {
+        const text = run.text || " ";
+        const font = run.code ? "F4" : run.bold ? "F2" : run.italic ? "F3" : options.font;
+        this.currentPage.commands.push(
+          `BT /${font} ${options.size} Tf ${formatPdfNumber(x)} ${this.y} Td ${toPdfHexString(text)} Tj ET`
+        );
+
+        if (run.bold) {
+          this.currentPage.commands.push(
+            `BT /${font} ${options.size} Tf ${formatPdfNumber(x + 0.25)} ${this.y} Td ${toPdfHexString(text)} Tj ET`
+          );
+        }
+
+        x += estimateTextWidth(text, options.size);
+      });
+
       this.y -= options.size + 5;
     });
 
@@ -557,6 +680,21 @@ class PdfWriter {
     return Math.max(20, Math.floor(usableWidth / (size * 0.55)));
   }
 
+  private getTextX(textWidth: number, indent: number, alignment: ExportTextContent["alignment"]) {
+    const left = page.margin + indent;
+    const usableWidth = page.width - page.margin * 2 - indent;
+
+    if (alignment === "center") {
+      return left + Math.max(0, (usableWidth - textWidth) / 2);
+    }
+
+    if (alignment === "right") {
+      return left + Math.max(0, usableWidth - textWidth);
+    }
+
+    return left;
+  }
+
   private trackCharacters(value: string) {
     for (let index = 0; index < value.length; index += 1) {
       this.usedCharacterCodes.add(value.charCodeAt(index));
@@ -856,6 +994,61 @@ function wrapText(value: string, maxChars: number) {
 
       return wrapped.length > 0 ? wrapped : [""];
     });
+}
+
+function wrapRichText(runs: ExportTextRun[], maxChars: number) {
+  const tokens = runs.flatMap((run) => splitRichTextRun(run));
+  const lines: ExportTextRun[][] = [];
+  let currentLine: ExportTextRun[] = [];
+  let currentLength = 0;
+
+  tokens.forEach((token) => {
+    const tokenLength = token.text.length;
+    const shouldWrap = currentLength > 0 && currentLength + tokenLength > maxChars && token.text.trim();
+
+    if (shouldWrap) {
+      lines.push(trimRichTextLine(currentLine));
+      currentLine = [];
+      currentLength = 0;
+    }
+
+    currentLine.push(token);
+    currentLength += tokenLength;
+  });
+
+  if (currentLine.length > 0) {
+    lines.push(trimRichTextLine(currentLine));
+  }
+
+  return lines.length > 0 ? lines : [[{ text: " " }]];
+}
+
+function splitRichTextRun(run: ExportTextRun) {
+  return run.text
+    .split(/(\s+)/)
+    .filter(Boolean)
+    .map((text) => ({ ...run, text }));
+}
+
+function trimRichTextLine(runs: ExportTextRun[]) {
+  const nextRuns = runs.map((run) => ({ ...run }));
+
+  while (nextRuns.length > 0 && !nextRuns[0]!.text.trim()) {
+    nextRuns.shift();
+  }
+
+  while (nextRuns.length > 0 && !nextRuns[nextRuns.length - 1]!.text.trim()) {
+    nextRuns.pop();
+  }
+
+  if (nextRuns.length === 0) {
+    return [{ text: " " }];
+  }
+
+  nextRuns[0]!.text = nextRuns[0]!.text.trimStart();
+  nextRuns[nextRuns.length - 1]!.text = nextRuns[nextRuns.length - 1]!.text.trimEnd();
+
+  return nextRuns.filter((run) => run.text);
 }
 
 function toPdfHexString(value: string) {

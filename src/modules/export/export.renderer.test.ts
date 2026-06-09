@@ -76,6 +76,146 @@ describe("editorDocumentToExportDocument", () => {
     ]);
   });
 
+  it("preserves inline text marks and block alignment for export", () => {
+    const document: EditorDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [
+        {
+          type: "paragraph",
+          attrs: { textAlign: "center" },
+          content: [
+            { type: "text", text: "Use " },
+            { type: "text", text: "bold", marks: [{ type: "bold" }] },
+            { type: "text", text: " and " },
+            { type: "text", text: "italic", marks: [{ type: "italic" }] },
+            { type: "text", text: " text." }
+          ]
+        },
+        {
+          type: "orderedList",
+          content: [
+            {
+              type: "listItem",
+              content: [{ type: "paragraph", content: [{ type: "text", text: "First", marks: [{ type: "bold" }] }] }]
+            }
+          ]
+        },
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  attrs: { textAlign: "right" },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "Cell", marks: [{ type: "italic" }] }] }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = editorDocumentToExportDocument("Formatted", document);
+
+    expect(result.blocks).toEqual([
+      {
+        type: "paragraph",
+        text: "Use bold and italic text.",
+        alignment: "center",
+        runs: [
+          { text: "Use " },
+          { text: "bold", bold: true },
+          { text: " and " },
+          { text: "italic", italic: true },
+          { text: " text." }
+        ]
+      },
+      {
+        type: "list",
+        ordered: true,
+        items: [
+          {
+            text: "First",
+            depth: 0,
+            ordered: true,
+            marker: "1.",
+            runs: [{ text: "First", bold: true }]
+          }
+        ]
+      },
+      {
+        type: "table",
+        rows: [
+          [
+            {
+              text: "Cell",
+              alignment: "right",
+              runs: [{ text: "Cell", italic: true }]
+            }
+          ]
+        ]
+      }
+    ]);
+  });
+
+  it("preserves nested list depth and ordered markers", () => {
+    const document: EditorDocument = {
+      type: "doc",
+      schemaVersion: 1,
+      content: [
+        {
+          type: "orderedList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "Parent" }] },
+                {
+                  type: "orderedList",
+                  content: [
+                    {
+                      type: "listItem",
+                      content: [
+                        { type: "paragraph", content: [{ type: "text", text: "Child" }] },
+                        {
+                          type: "bulletList",
+                          content: [
+                            {
+                              type: "listItem",
+                              content: [{ type: "paragraph", content: [{ type: "text", text: "Bullet child" }] }]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const result = editorDocumentToExportDocument("Nested", document);
+
+    expect(result.blocks).toEqual([
+      {
+        type: "list",
+        ordered: true,
+        items: [
+          { text: "Parent", depth: 0, ordered: true, marker: "1." },
+          { text: "Child", depth: 1, ordered: true, marker: "1.1." },
+          { text: "Bullet child", depth: 2, ordered: false, marker: undefined }
+        ]
+      }
+    ]);
+  });
+
   it("preserves image export metadata used by PDF and DOCX embedding", () => {
     const document: EditorDocument = {
       type: "doc",

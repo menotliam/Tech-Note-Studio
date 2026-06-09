@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MutableRefObject,
   type ReactNode,
   type RefObject
@@ -24,6 +25,7 @@ import { Table } from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
 import TableRow from "@tiptap/extension-table-row";
+import { findTable, moveTableColumn, moveTableRow, selectedRect } from "@tiptap/pm/tables";
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import {
@@ -92,6 +94,31 @@ type EditorFindHighlightState = {
   matches: EditorFindMatch[];
   activeIndex: number;
 };
+type TableContextMenuState = {
+  x: number;
+  y: number;
+  tableRect: DOMRect;
+  editorRect: DOMRect;
+} | null;
+type TableInsertMenuPosition = {
+  left: number;
+  top: number;
+} | null;
+type TableCommand =
+  | "add-row-before"
+  | "add-row-after"
+  | "move-row-up"
+  | "move-row-down"
+  | "delete-row"
+  | "add-column-before"
+  | "add-column-after"
+  | "move-column-left"
+  | "move-column-right"
+  | "delete-column"
+  | "clear-cell"
+  | "clear-row"
+  | "clear-column"
+  | "delete-table";
 
 const imageCaretAnchor = "\u200B";
 const internalImageDragType = "application/x-technote-image-position";
@@ -202,6 +229,23 @@ const TextAlignmentExtension = Extension.create({
   }
 });
 
+const ResizableTable = Table.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: null,
+        parseHTML: (element) => sanitizeTableWidth(element.style.width),
+        renderHTML: (attributes) => {
+          const width = sanitizeTableWidth(attributes.width);
+
+          return width ? { style: `width: ${width}px` } : {};
+        }
+      }
+    };
+  }
+});
+
 const EditorFindHighlightExtension = Extension.create({
   name: "editorFindHighlight",
 
@@ -268,12 +312,20 @@ export function RichNoteEditor({
   const [findMatches, setFindMatches] = useState<EditorFindMatch[]>([]);
   const [activeFindIndex, setActiveFindIndex] = useState(0);
   const [pendingCloseNoteId, setPendingCloseNoteId] = useState<string | null>(null);
+  const [tableInsertOpen, setTableInsertOpen] = useState(false);
+  const [tableRows, setTableRows] = useState(3);
+  const [tableColumns, setTableColumns] = useState(3);
+  const [tableInsertMenuPosition, setTableInsertMenuPosition] = useState<TableInsertMenuPosition>(null);
+  const [tableContextMenu, setTableContextMenu] = useState<TableContextMenuState>(null);
   const autoDetectionEnabledRef = useRef(autoDetectionEnabled);
   const saveCurrentNoteRef = useRef<(() => Promise<void>) | null>(null);
   const dirtyRef = useRef(false);
   const cacheWriteVersionRef = useRef(0);
   const savedCacheVersionRef = useRef(0);
   const cacheTimerRef = useRef<number | null>(null);
+  const toolbarRefreshFrameRef = useRef<number | null>(null);
+  const tableInsertButtonRef = useRef<HTMLSpanElement | null>(null);
+  const lastEditorSelectionRef = useRef<Selection | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const findInputRef = useRef<HTMLInputElement | null>(null);
   const [pasteSuggestion, setPasteSuggestion] = useState<{
@@ -315,7 +367,43 @@ export function RichNoteEditor({
       if (cacheTimerRef.current) {
         window.clearTimeout(cacheTimerRef.current);
       }
+      if (toolbarRefreshFrameRef.current) {
+        window.cancelAnimationFrame(toolbarRefreshFrameRef.current);
+      }
     };
+  }, []);
+
+  const updateActiveTextAlignment = useCallback((state: EditorState) => {
+    const nextAlignment = getActiveTextAlignment(state);
+    setActiveTextAlignment((currentAlignment) =>
+      currentAlignment === nextAlignment ? currentAlignment : nextAlignment
+    );
+  }, []);
+
+  const scheduleToolbarRefresh = useCallback(() => {
+    if (toolbarRefreshFrameRef.current) {
+      return;
+    }
+
+    toolbarRefreshFrameRef.current = window.requestAnimationFrame(() => {
+      toolbarRefreshFrameRef.current = null;
+      refreshToolbarState((version) => version + 1);
+    });
+  }, []);
+
+  const updateTableInsertMenuPosition = useCallback(() => {
+    const rect = tableInsertButtonRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    const menuWidth = 242;
+    const gutter = 8;
+    setTableInsertMenuPosition({
+      left: Math.max(gutter, Math.min(rect.left, window.innerWidth - menuWidth - gutter)),
+      top: rect.bottom + 6
+    });
   }, []);
 
   useEffect(() => {
@@ -378,6 +466,70 @@ export function RichNoteEditor({
     return () => window.removeEventListener("technote:outline-jump", handleOutlineJump);
   }, []);
 
+  useEffect(() => {
+    function closeFloatingMenus(event?: Event) {
+      const target = event?.target instanceof HTMLElement ? event.target : null;
+
+      if (target?.closest("[data-table-floating]")) {
+        return;
+      }
+
+      setTableInsertOpen(false);
+      setTableInsertMenuPosition(null);
+      setTableContextMenu(null);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeFloatingMenus();
+      }
+    }
+
+    window.addEventListener("click", closeFloatingMenus);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", closeFloatingMenus);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!tableInsertOpen) {
+      return;
+    }
+
+    updateTableInsertMenuPosition();
+    window.addEventListener("resize", updateTableInsertMenuPosition);
+    window.addEventListener("scroll", updateTableInsertMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateTableInsertMenuPosition);
+      window.removeEventListener("scroll", updateTableInsertMenuPosition, true);
+    };
+  }, [tableInsertOpen, updateTableInsertMenuPosition]);
+
+  useEffect(() => {
+    if (!tableContextMenu) {
+      return;
+    }
+
+    function closeContextMenuAwayFromTable(event: Event) {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+
+      if (target?.closest("[data-table-floating]") || target?.closest("table")) {
+        return;
+      }
+
+      setTableContextMenu(null);
+    }
+
+    window.addEventListener("pointermove", closeContextMenuAwayFromTable);
+    window.addEventListener("scroll", closeContextMenuAwayFromTable, true);
+    return () => {
+      window.removeEventListener("pointermove", closeContextMenuAwayFromTable);
+      window.removeEventListener("scroll", closeContextMenuAwayFromTable, true);
+    };
+  }, [tableContextMenu]);
+
   const editor = useEditor({
     immediatelyRender: false,
     enableInputRules: preferences.markdownShortcutsEnabled,
@@ -406,8 +558,9 @@ export function RichNoteEditor({
       TaskItem.configure({
         nested: true
       }),
-      Table.configure({
-        resizable: true
+      ResizableTable.configure({
+        resizable: true,
+        renderWrapper: true
       }),
       TableRow,
       TableHeader,
@@ -558,6 +711,50 @@ export function RichNoteEditor({
           }
         });
         return true;
+      },
+      handleDOMEvents: {
+        contextmenu(view, event) {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const table = target?.closest("table");
+
+          if (!table) {
+            setTableContextMenu(null);
+            return false;
+          }
+
+          event.preventDefault();
+          view.focus();
+          const clickedPosition = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+
+          if (typeof clickedPosition === "number") {
+            const safePosition = Math.max(0, Math.min(clickedPosition, view.state.doc.content.size));
+            view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(safePosition))).scrollIntoView());
+          }
+
+          setTableInsertOpen(false);
+          setTableInsertMenuPosition(null);
+          setTableContextMenu({
+            ...getTableContextMenuPosition({
+              x: event.clientX,
+              y: event.clientY,
+              editorRect: getEditorFloatingBounds(containerRef.current),
+              tableRect: table.getBoundingClientRect()
+            })
+          });
+          return true;
+        },
+        pointerup(view, event) {
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          const tableWrapper = target?.closest<HTMLElement>(".tableWrapper");
+          const table = tableWrapper?.querySelector("table");
+
+          if (!tableWrapper || !table) {
+            return false;
+          }
+
+          persistResizedTableWidth(view, tableWrapper, table);
+          return false;
+        }
       }
     },
     onCreate({ editor: createdEditor }) {
@@ -570,17 +767,24 @@ export function RichNoteEditor({
         onContentLoaded: (document, text, dirty) => {
           setContentJson(JSON.stringify(document));
           setContentText(text);
-          setActiveTextAlignment(getActiveTextAlignment(createdEditor.state));
+          updateActiveTextAlignment(createdEditor.state);
           markNoteDirty(noteId, dirty);
         }
       });
     },
     onSelectionUpdate({ editor: updatedEditor }) {
-      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
+      lastEditorSelectionRef.current = updatedEditor.state.selection;
+      updateActiveTextAlignment(updatedEditor.state);
     },
-    onTransaction({ editor: updatedEditor }) {
-      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
-      refreshToolbarState((version) => version + 1);
+    onTransaction({ editor: updatedEditor, transaction }) {
+      if (transaction.selectionSet) {
+        lastEditorSelectionRef.current = updatedEditor.state.selection;
+        updateActiveTextAlignment(updatedEditor.state);
+      }
+
+      if (transaction.docChanged || transaction.selectionSet || transaction.storedMarksSet) {
+        scheduleToolbarRefresh();
+      }
     },
     onUpdate({ editor: updatedEditor }) {
       const document = toEditorDocument(updatedEditor.getJSON());
@@ -590,7 +794,7 @@ export function RichNoteEditor({
 
       setContentJson(JSON.stringify(document));
       setContentText(text);
-      setActiveTextAlignment(getActiveTextAlignment(updatedEditor.state));
+      updateActiveTextAlignment(updatedEditor.state);
       markNoteDirty(noteId, true);
 
       if (cacheTimerRef.current) {
@@ -619,6 +823,46 @@ export function RichNoteEditor({
       }, 500);
     }
   });
+
+  const handleInsertTable = useCallback(() => {
+    if (!editor) {
+      return;
+    }
+
+    const rows = clampTableDimension(tableRows);
+    const columns = clampTableDimension(tableColumns);
+    const lastSelection = lastEditorSelectionRef.current;
+
+    editor.view.focus();
+
+    if (lastSelection) {
+      try {
+        editor.view.dispatch(editor.state.tr.setSelection(lastSelection).scrollIntoView());
+      } catch {
+        // If the document changed since the menu opened, TipTap can safely use the current selection.
+      }
+    }
+
+    const inserted = editor
+      .chain()
+      .focus()
+      .insertTable({
+        rows,
+        cols: columns,
+        withHeaderRow: true
+      })
+      .run();
+
+    if (!inserted) {
+      editor.commands.insertContent({
+        type: "table",
+        content: createTableContent(rows, columns)
+      });
+    }
+
+    setTableInsertOpen(false);
+    setTableInsertMenuPosition(null);
+  }, [editor, tableColumns, tableRows]);
 
   const saveCurrentNote = useCallback(async () => {
     if (cacheTimerRef.current) {
@@ -824,14 +1068,24 @@ export function RichNoteEditor({
         <ToolbarButton label="Code block" active={editor?.isActive("codeBlock")} onClick={() => editor?.chain().focus().toggleCodeBlock().run()}>
           <Braces size={15} />
         </ToolbarButton>
-        <ToolbarButton
-          label="Table"
-          onClick={() =>
-            editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
-          }
-        >
-          <Table2 size={15} />
-        </ToolbarButton>
+        <span ref={tableInsertButtonRef} className="inline-flex" data-table-floating>
+          <ToolbarButton
+            label="Table"
+            active={tableInsertOpen}
+            onClick={() => {
+              if (tableInsertOpen) {
+                setTableInsertOpen(false);
+                setTableInsertMenuPosition(null);
+                return;
+              }
+
+              updateTableInsertMenuPosition();
+              setTableInsertOpen(true);
+            }}
+          >
+            <Table2 size={15} />
+          </ToolbarButton>
+        </span>
         <ToolbarButton
           label="Upload image"
           onClick={() => imageInputRef.current?.click()}
@@ -839,6 +1093,27 @@ export function RichNoteEditor({
           <ImageIcon size={15} />
         </ToolbarButton>
       </div>
+      {tableInsertOpen && tableInsertMenuPosition ? (
+        <TableInsertMenu
+          position={tableInsertMenuPosition}
+          rows={tableRows}
+          columns={tableColumns}
+          onRowsChange={setTableRows}
+          onColumnsChange={setTableColumns}
+          onInsert={handleInsertTable}
+        />
+      ) : null}
+      {tableContextMenu && editor ? (
+        <TableContextMenu
+          x={tableContextMenu.x}
+          y={tableContextMenu.y}
+          onClose={() => setTableContextMenu(null)}
+          onCommand={(command) => {
+            executeTableCommand(editor, command);
+            setTableContextMenu(null);
+          }}
+        />
+      ) : null}
       {findOpen ? (
         <EditorFindPanel
           inputRef={findInputRef}
@@ -1267,6 +1542,433 @@ function restoreScrollPosition(element: HTMLElement, scrollTop: number) {
   window.setTimeout(() => {
     element.scrollTop = scrollTop;
   }, 120);
+}
+
+function TableInsertMenu({
+  position,
+  rows,
+  columns,
+  onRowsChange,
+  onColumnsChange,
+  onInsert
+}: {
+  position: NonNullable<TableInsertMenuPosition>;
+  rows: number;
+  columns: number;
+  onRowsChange: (value: number) => void;
+  onColumnsChange: (value: number) => void;
+  onInsert: () => void;
+}) {
+  const menuStyle: CSSProperties = {
+    left: position.left,
+    top: position.top
+  };
+
+  return (
+    <div
+      className="fixed z-50 flex items-end gap-2 rounded-md border border-border bg-panel-strong p-2 text-foreground shadow-2xl shadow-black/25 ring-1 ring-black/5 dark:shadow-black/50 dark:ring-white/10"
+      style={menuStyle}
+      data-table-floating
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <TableDimensionControl label="Columns" value={columns} onChange={onColumnsChange} />
+      <TableDimensionControl label="Rows" value={rows} onChange={onRowsChange} />
+      <button
+        type="button"
+        className="h-8 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:opacity-95"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onInsert();
+        }}
+      >
+        Insert
+      </button>
+    </div>
+  );
+}
+
+function TableDimensionControl({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const [activeControl, setActiveControl] = useState<"decrease" | "increase" | null>(null);
+
+  return (
+    <div className="grid gap-1 text-[11px] font-medium text-muted-foreground">
+      <span>{label}</span>
+      <span className="grid h-8 w-[5.5rem] grid-cols-[1.5rem_minmax(0,1fr)_1.5rem] overflow-hidden rounded-md border border-border bg-background text-foreground shadow-inner shadow-black/5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/35">
+        <TableDimensionButton
+          label={`Decrease ${label.toLowerCase()}`}
+          active={activeControl === "decrease"}
+          onActiveChange={(active) => setActiveControl(active ? "decrease" : null)}
+          onClick={() => onChange(clampTableDimension(value - 1))}
+        >
+          -
+        </TableDimensionButton>
+        <input
+          type="number"
+          min={1}
+          max={12}
+          value={value}
+          onChange={(event) => onChange(clampTableDimension(Number(event.target.value)))}
+          onFocus={() => setActiveControl(null)}
+          onPointerEnter={() => setActiveControl(null)}
+          onPointerDown={() => setActiveControl(null)}
+          className="[appearance:textfield] h-full min-w-0 border-x border-border bg-transparent px-1 text-center text-sm font-medium text-foreground outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
+        <TableDimensionButton
+          label={`Increase ${label.toLowerCase()}`}
+          active={activeControl === "increase"}
+          onActiveChange={(active) => setActiveControl(active ? "increase" : null)}
+          onClick={() => onChange(clampTableDimension(value + 1))}
+        >
+          +
+        </TableDimensionButton>
+      </span>
+    </div>
+  );
+}
+
+function TableDimensionButton({
+  label,
+  active,
+  onActiveChange,
+  onClick,
+  children
+}: {
+  label: string;
+  active: boolean;
+  onActiveChange: (active: boolean) => void;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={
+        "flex h-full items-center justify-center text-xs font-semibold transition focus-visible:outline-none active:bg-primary active:text-primary-foreground " +
+        (active ? "bg-muted text-foreground" : "bg-transparent text-muted-foreground")
+      }
+      aria-label={label}
+      onPointerEnter={() => onActiveChange(true)}
+      onPointerLeave={() => onActiveChange(false)}
+      onPointerDown={() => onActiveChange(true)}
+      onFocus={() => onActiveChange(true)}
+      onBlur={() => onActiveChange(false)}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TableContextMenu({
+  x,
+  y,
+  onClose,
+  onCommand
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  onCommand: (command: TableCommand) => void;
+}) {
+  return (
+    <div
+      className="fixed z-50 min-w-48 rounded-md border border-border bg-panel-strong p-1 text-foreground shadow-2xl shadow-black/25 ring-1 ring-black/5 dark:shadow-black/50 dark:ring-white/10"
+      style={{ left: x, top: y }}
+      data-table-floating
+      role="menu"
+      onContextMenu={(event) => event.preventDefault()}
+      onMouseLeave={onClose}
+    >
+      <TableMenuButton label="Insert row above" onClick={() => onCommand("add-row-before")} />
+      <TableMenuButton label="Insert row below" onClick={() => onCommand("add-row-after")} />
+      <TableMenuButton label="Move row up" onClick={() => onCommand("move-row-up")} />
+      <TableMenuButton label="Move row down" onClick={() => onCommand("move-row-down")} />
+      <TableMenuButton label="Clear selected row" onClick={() => onCommand("clear-row")} />
+      <TableMenuButton label="Delete row" onClick={() => onCommand("delete-row")} />
+      <TableMenuSeparator />
+      <TableMenuButton label="Insert column left" onClick={() => onCommand("add-column-before")} />
+      <TableMenuButton label="Insert column right" onClick={() => onCommand("add-column-after")} />
+      <TableMenuButton label="Move column left" onClick={() => onCommand("move-column-left")} />
+      <TableMenuButton label="Move column right" onClick={() => onCommand("move-column-right")} />
+      <TableMenuButton label="Clear selected column" onClick={() => onCommand("clear-column")} />
+      <TableMenuButton label="Delete column" onClick={() => onCommand("delete-column")} />
+      <TableMenuSeparator />
+      <TableMenuButton label="Clear selected cell" onClick={() => onCommand("clear-cell")} />
+      <TableMenuButton label="Delete table" danger onClick={() => onCommand("delete-table")} />
+      <button type="button" className="sr-only" onClick={onClose}>
+        Close table menu
+      </button>
+    </div>
+  );
+}
+
+function getTableContextMenuPosition({
+  x,
+  y,
+  editorRect,
+  tableRect
+}: {
+  x: number;
+  y: number;
+  editorRect: DOMRect;
+  tableRect: DOMRect;
+}): NonNullable<TableContextMenuState> {
+  const menuWidth = 202;
+  const menuHeight = 420;
+  const gutter = 8;
+  const minLeft = Math.max(gutter, editorRect.left + gutter);
+  const maxLeft = Math.max(minLeft, editorRect.right - menuWidth - gutter);
+  const minTop = Math.max(gutter, editorRect.top + gutter);
+  const maxTop = Math.max(minTop, editorRect.bottom - menuHeight - gutter);
+  const preferAbove = y + menuHeight + gutter > editorRect.bottom;
+  const preferredTop = preferAbove ? y - menuHeight - gutter : y;
+
+  return {
+    x: Math.max(minLeft, Math.min(x, maxLeft)),
+    y: Math.max(minTop, Math.min(preferredTop, maxTop)),
+    editorRect,
+    tableRect
+  };
+}
+
+function getEditorFloatingBounds(container: HTMLElement | null) {
+  const bounds =
+    container?.closest<HTMLElement>("[data-editor-scroll-container]")?.getBoundingClientRect() ??
+    container?.getBoundingClientRect();
+
+  if (bounds) {
+    return bounds;
+  }
+
+  return new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+}
+
+function TableMenuButton({ label, danger = false, onClick }: { label: string; danger?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={
+        "block h-8 w-full rounded px-2 text-left text-xs transition hover:bg-muted " +
+        (danger ? "text-red-500" : "text-foreground")
+      }
+      role="menuitem"
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+function TableMenuSeparator() {
+  return <div className="my-1 h-px bg-border" role="separator" />;
+}
+
+function executeTableCommand(editor: Editor, command: TableCommand) {
+  const chain = editor.chain().focus();
+
+  if (command === "add-row-before") {
+    chain.addRowBefore().run();
+  } else if (command === "add-row-after") {
+    chain.addRowAfter().run();
+  } else if (command === "move-row-up") {
+    moveSelectedTableRow(editor, -1);
+  } else if (command === "move-row-down") {
+    moveSelectedTableRow(editor, 1);
+  } else if (command === "delete-row") {
+    chain.deleteRow().run();
+  } else if (command === "add-column-before") {
+    chain.addColumnBefore().run();
+  } else if (command === "add-column-after") {
+    chain.addColumnAfter().run();
+  } else if (command === "move-column-left") {
+    moveSelectedTableColumn(editor, -1);
+  } else if (command === "move-column-right") {
+    moveSelectedTableColumn(editor, 1);
+  } else if (command === "delete-column") {
+    chain.deleteColumn().run();
+  } else if (command === "clear-cell") {
+    clearSelectedTableCells(editor, "cell");
+  } else if (command === "clear-row") {
+    clearSelectedTableCells(editor, "row");
+  } else if (command === "clear-column") {
+    clearSelectedTableCells(editor, "column");
+  } else if (command === "delete-table") {
+    chain.deleteTable().run();
+  }
+}
+
+function moveSelectedTableRow(editor: Editor, direction: -1 | 1) {
+  const rect = getSelectedTableRect(editor);
+
+  if (!rect) {
+    return;
+  }
+
+  const from = direction < 0 ? rect.top : rect.bottom - 1;
+  const to = from + direction;
+
+  if (to < 0 || to >= rect.map.height) {
+    return;
+  }
+
+  moveTableRow({ from, to, select: true })(editor.state, (transaction) => editor.view.dispatch(transaction));
+}
+
+function moveSelectedTableColumn(editor: Editor, direction: -1 | 1) {
+  const rect = getSelectedTableRect(editor);
+
+  if (!rect) {
+    return;
+  }
+
+  const from = direction < 0 ? rect.left : rect.right - 1;
+  const to = from + direction;
+
+  if (to < 0 || to >= rect.map.width) {
+    return;
+  }
+
+  moveTableColumn({ from, to, select: true })(editor.state, (transaction) => editor.view.dispatch(transaction));
+}
+
+function clearSelectedTableCells(editor: Editor, scope: "cell" | "row" | "column") {
+  const rect = getSelectedTableRect(editor);
+
+  if (!rect) {
+    return;
+  }
+
+  const targetRect =
+    scope === "row"
+      ? { left: 0, right: rect.map.width, top: rect.top, bottom: rect.bottom }
+      : scope === "column"
+        ? { left: rect.left, right: rect.right, top: 0, bottom: rect.map.height }
+        : { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+  const cellPositions = rect.map.cellsInRect(targetRect).sort((left, right) => right - left);
+
+  if (cellPositions.length === 0) {
+    return;
+  }
+
+  let transaction = editor.state.tr;
+  const paragraph = editor.state.schema.nodes.paragraph?.createAndFill();
+
+  if (!paragraph) {
+    return;
+  }
+
+  cellPositions.forEach((cellPosition) => {
+    const absoluteCellPosition = rect.tableStart + cellPosition;
+    const mappedCellPosition = transaction.mapping.map(absoluteCellPosition);
+    const cell = transaction.doc.nodeAt(mappedCellPosition);
+
+    if (!cell || (cell.type.name !== "tableCell" && cell.type.name !== "tableHeader")) {
+      return;
+    }
+
+    transaction = transaction.replaceWith(
+      mappedCellPosition + 1,
+      mappedCellPosition + cell.nodeSize - 1,
+      paragraph
+    );
+  });
+
+  if (transaction.docChanged) {
+    editor.view.dispatch(transaction.scrollIntoView());
+    editor.view.focus();
+  }
+}
+
+function getSelectedTableRect(editor: Editor) {
+  try {
+    return selectedRect(editor.state);
+  } catch {
+    return null;
+  }
+}
+
+function createTableContent(rows: number, columns: number): JSONContent[] {
+  const safeRows = clampTableDimension(rows);
+  const safeColumns = clampTableDimension(columns);
+
+  return Array.from({ length: safeRows }, (_, rowIndex) => ({
+    type: "tableRow",
+    content: Array.from({ length: safeColumns }, () => ({
+      type: rowIndex === 0 ? "tableHeader" : "tableCell",
+      content: [
+        {
+          type: "paragraph"
+        }
+      ]
+    }))
+  }));
+}
+
+function persistResizedTableWidth(view: EditorView, tableWrapper: HTMLElement, table: HTMLTableElement) {
+  let tableHitPosition: number;
+
+  try {
+    tableHitPosition = view.posAtDOM(table, 0);
+  } catch {
+    return;
+  }
+
+  const resolvedPosition = view.state.doc.resolve(Math.max(0, Math.min(tableHitPosition, view.state.doc.content.size)));
+  const tableInfo = findTable(resolvedPosition);
+
+  if (!tableInfo) {
+    return;
+  }
+
+  const width = sanitizeTableWidth(tableWrapper.getBoundingClientRect().width);
+
+  if (!width || tableInfo.node.attrs.width === width) {
+    return;
+  }
+
+  view.dispatch(
+    view.state.tr
+      .setNodeMarkup(tableInfo.pos, undefined, {
+        ...tableInfo.node.attrs,
+        width
+      })
+      .scrollIntoView()
+  );
+}
+
+function sanitizeTableWidth(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.round(Math.min(Math.max(value, 240), 1400));
+  }
+
+  if (typeof value === "string") {
+    const match = value.match(/^(\d+(?:\.\d+)?)px$/);
+
+    if (match) {
+      return sanitizeTableWidth(Number(match[1]));
+    }
+  }
+
+  return null;
+}
+
+function clampTableDimension(value: number) {
+  if (!Number.isFinite(value)) {
+    return 3;
+  }
+
+  return Math.max(1, Math.min(12, Math.round(value)));
 }
 
 function ToolbarButton({

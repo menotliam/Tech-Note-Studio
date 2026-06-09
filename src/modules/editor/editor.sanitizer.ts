@@ -96,6 +96,8 @@ function sanitizeAttrs(nodeType: string, attrs: Record<string, unknown> | undefi
       return { checked: Boolean(attrs?.checked) };
     case "image":
       return sanitizeImageAttrs(attrs);
+    case "table":
+      return sanitizeTableAttrs(attrs);
     case "codeBlock":
       return sanitizeCodeBlockAttrs(attrs);
     default:
@@ -105,6 +107,20 @@ function sanitizeAttrs(nodeType: string, attrs: Record<string, unknown> | undefi
 
 function sanitizeHeadingLevel(level: unknown) {
   return level === 1 || level === 2 || level === 3 ? level : 2;
+}
+
+function sanitizeTableAttrs(attrs: Record<string, unknown> | undefined) {
+  const width = sanitizeTableWidth(attrs?.width);
+
+  return width ? { width } : undefined;
+}
+
+function sanitizeTableWidth(width: unknown) {
+  if (typeof width === "number" && Number.isFinite(width)) {
+    return Math.round(Math.min(Math.max(width, 240), 1400));
+  }
+
+  return undefined;
 }
 
 function sanitizeImageAttrs(attrs: Record<string, unknown> | undefined) {
