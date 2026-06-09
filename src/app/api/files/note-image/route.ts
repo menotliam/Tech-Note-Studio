@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiAccess } from "@/modules/access-control/access-control.api";
 
 const fileIdSchema = z.string().uuid();
 const allowedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -23,13 +24,13 @@ export async function GET(request: NextRequest) {
   }
 
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  const access = await requireApiAccess(supabase);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!access.ok) {
+    return access.response;
   }
+
+  const { user } = access;
 
   const { data: file, error: fileError } = await supabase
     .from("note_files")

@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { evaluateAppAccess } from "@/modules/access-control/access-control.service";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
 import { loginSchema, signupSchema } from "./auth.schemas";
 import type { AuthActionState } from "./auth.types";
@@ -40,6 +41,12 @@ export async function loginAction(
       status: "error",
       message: "Email or password is incorrect."
     };
+  }
+
+  const access = await evaluateAppAccess(supabase, data.user);
+
+  if (!access.allowed) {
+    redirect(access.redirectTo);
   }
 
   try {
@@ -92,6 +99,12 @@ export async function signupAction(
   }
 
   if (data.user && data.session) {
+    const access = await evaluateAppAccess(supabase, data.user);
+
+    if (!access.allowed) {
+      redirect(access.redirectTo);
+    }
+
     try {
       await ensureUserFoundation(supabase, data.user, parsed.data.displayName);
     } catch {

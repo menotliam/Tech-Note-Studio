@@ -1,19 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiAccess } from "@/modules/access-control/access-control.api";
 import { userPreferencesPatchSchema } from "@/modules/preferences/preferences.schemas";
+import { isSameOriginRequest } from "@/modules/security/csrf";
 import { updateUserPreferences } from "@/modules/preferences/preferences.service";
 import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
 export async function PATCH(request: NextRequest) {
   const requestContext = getSecurityRequestContext(request);
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Invalid preferences request." }, { status: 403 });
   }
+
+  const supabase = await createSupabaseServerClient();
+  const access = await requireApiAccess(supabase);
+
+  if (!access.ok) {
+    return access.response;
+  }
+
+  const { user } = access;
 
   const body = await readJsonBody(request);
 

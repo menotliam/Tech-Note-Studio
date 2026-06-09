@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServiceRoleClient } from "@/lib/supabase/service-role";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiAccess } from "@/modules/access-control/access-control.api";
 import { sanitizeEditorDocument } from "@/modules/editor/editor.sanitizer";
 import type { EditorDocument } from "@/modules/editor/editor.types";
 import { attachExportImageAssets, ExportImageLoadError } from "@/modules/export/export-image-loader";
@@ -9,6 +10,7 @@ import { exportNotesSchema } from "@/modules/export/export.schemas";
 import { generateDocx, generateDocxBundle } from "@/modules/export/generators/docx.generator";
 import { generatePdf, generatePdfBundle } from "@/modules/export/generators/pdf.generator";
 import { generateZip } from "@/modules/export/generators/zip.generator";
+import { consumeRateLimit, createRateLimitKey, getRequestIp } from "@/modules/rate-limit/rate-limit.service";
 import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
 type ExportNoteRow = {
@@ -22,19 +24,23 @@ type ExportDocumentForDownload = ReturnType<typeof editorDocumentToExportDocumen
 
 const exportRateLimitWindowMs = 60_000;
 const exportRateLimitMaxRequests = 10;
-const exportRateLimitBuckets = new Map<string, number[]>();
+const exportRateLimit = {
+  action: "export",
+  limit: exportRateLimitMaxRequests,
+  windowSeconds: exportRateLimitWindowMs / 1000
+};
 
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const requestContext = getSecurityRequestContext(request);
   const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
+  const access = await requireApiAccess(supabase);
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!access.ok) {
+    return access.response;
   }
+
+  const { user } = access;
 
   const parsed = exportNotesSchema.safeParse({
     noteIds: getRequestedNoteIds(requestUrl),
@@ -53,7 +59,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid export request." }, { status: 400 });
   }
 
-  if (!consumeExportRateLimit(user.id)) {
+  const rateLimit =
+    process.env.RATE_LIMIT_ENABLED === "false"
+      ? { allowed: true, retryAfterSeconds: exportRateLimit.windowSeconds }
+      : await consumeRateLimit(supabase, {
+          ...exportRateLimit,
+          key: createRateLimitKey([user.id, getRequestIp(request)])
+        });
+
+  if (!rateLimit.allowed) {
     await logSecurityEvent(supabase, {
       userId: user.id,
       eventType: "INVALID_EXPORT_REQUEST",
@@ -61,7 +75,10 @@ export async function GET(request: NextRequest) {
       ...requestContext,
       metadata: { reason: "rate_limited" }
     });
-    return NextResponse.json({ error: "Too many export requests." }, { status: 429 });
+    return NextResponse.json(
+      { error: "Too many export requests." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } }
+    );
   }
 
   const uniqueNoteIds = [...new Set(parsed.data.noteIds)];
@@ -181,20 +198,6 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ error: getSafeExportErrorMessage(error) }, { status: 500 });
   }
-}
-
-function consumeExportRateLimit(userId: string) {
-  const now = Date.now();
-  const bucket = exportRateLimitBuckets.get(userId)?.filter((timestamp) => now - timestamp < exportRateLimitWindowMs) ?? [];
-
-  if (bucket.length >= exportRateLimitMaxRequests) {
-    exportRateLimitBuckets.set(userId, bucket);
-    return false;
-  }
-
-  bucket.push(now);
-  exportRateLimitBuckets.set(userId, bucket);
-  return true;
 }
 
 function createSafeFilename(title: string, format: "pdf" | "docx") {

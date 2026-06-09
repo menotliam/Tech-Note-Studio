@@ -1,6 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { requireApiAccess } from "@/modules/access-control/access-control.api";
 import { noteIdSchema } from "@/modules/notes/note.schemas";
+import { consumeRateLimit, createRateLimitKey, getRequestIp } from "@/modules/rate-limit/rate-limit.service";
+import { isSameOriginRequest } from "@/modules/security/csrf";
 import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
 const allowedImageTypes = new Map([
@@ -10,16 +13,41 @@ const allowedImageTypes = new Map([
 ]);
 const maxImageSizeBytes = 10 * 1024 * 1024;
 const bucketName = process.env.SUPABASE_NOTE_FILES_BUCKET ?? "note-files";
+const uploadRateLimit = {
+  action: "upload_image",
+  limit: 30,
+  windowSeconds: 300
+};
 
 export async function POST(request: NextRequest) {
   const requestContext = getSecurityRequestContext(request);
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase.auth.getUser();
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Invalid upload request." }, { status: 403 });
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const access = await requireApiAccess(supabase);
+
+  if (!access.ok) {
+    return access.response;
+  }
+
+  const { user } = access;
+  const rateLimit =
+    process.env.RATE_LIMIT_ENABLED === "false"
+      ? { allowed: true, retryAfterSeconds: uploadRateLimit.windowSeconds }
+      : await consumeRateLimit(supabase, {
+          ...uploadRateLimit,
+          key: createRateLimitKey([user.id, getRequestIp(request)])
+        });
+
+  if (!rateLimit.allowed) {
+    await logRejectedUpload("rate_limited", user.id, requestContext, supabase);
+    return NextResponse.json(
+      { error: "Too many upload requests." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } }
+    );
   }
 
   const formData = await request.formData();

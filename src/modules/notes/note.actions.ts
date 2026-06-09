@@ -7,6 +7,7 @@ import { createEditorDocumentFromPlainText, emptyEditorDocument } from "@/module
 import { parseEditorDocumentJson } from "@/modules/editor/editor.validation";
 import { logSecurityEvent } from "@/modules/security/security.repository";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
+import { evaluateAppAccess } from "@/modules/access-control/access-control.service";
 import { hardDeleteTrashedFoldersByIds, hardDeleteTrashedNotesByIds } from "./note-lifecycle.service";
 import { noteIdSchema, renameNoteSchema, updateNoteSchema } from "./note.schemas";
 
@@ -18,6 +19,12 @@ export async function getAuthedFoundation() {
 
   if (!user) {
     redirect("/login");
+  }
+
+  const access = await evaluateAppAccess(supabase, user);
+
+  if (!access.allowed) {
+    redirect(access.redirectTo);
   }
 
   const { workspaceId } = await ensureUserFoundation(supabase, user);

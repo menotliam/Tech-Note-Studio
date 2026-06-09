@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { evaluateAppAccess } from "@/modules/access-control/access-control.service";
 import { ensureUserFoundation } from "@/modules/workspace/workspace.service";
 
 export async function GET(request: NextRequest) {
@@ -16,6 +17,12 @@ export async function GET(request: NextRequest) {
     } = await supabase.auth.getUser();
 
     if (user) {
+      const access = await evaluateAppAccess(supabase, user);
+
+      if (!access.allowed) {
+        return NextResponse.redirect(new URL(access.redirectTo, requestUrl.origin));
+      }
+
       await ensureUserFoundation(
         supabase,
         user,
