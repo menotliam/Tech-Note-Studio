@@ -10,7 +10,7 @@ import { exportNotesSchema } from "@/modules/export/export.schemas";
 import { generateDocx, generateDocxBundle } from "@/modules/export/generators/docx.generator";
 import { generatePdf, generatePdfBundle } from "@/modules/export/generators/pdf.generator";
 import { generateZip } from "@/modules/export/generators/zip.generator";
-import { consumeRateLimit, createRateLimitKey, getRequestIp } from "@/modules/rate-limit/rate-limit.service";
+import { consumeRateLimit, createRateLimitKey, getRequestIp, isRateLimitEnabled } from "@/modules/rate-limit/rate-limit.service";
 import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
 type ExportNoteRow = {
@@ -59,13 +59,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid export request." }, { status: 400 });
   }
 
-  const rateLimit =
-    process.env.RATE_LIMIT_ENABLED === "false"
-      ? { allowed: true, retryAfterSeconds: exportRateLimit.windowSeconds }
-      : await consumeRateLimit(supabase, {
-          ...exportRateLimit,
-          key: createRateLimitKey([user.id, getRequestIp(request)])
-        });
+  const rateLimit = isRateLimitEnabled(process.env.RATE_LIMIT_ENABLED)
+    ? await consumeRateLimit(supabase, {
+        ...exportRateLimit,
+        key: createRateLimitKey([user.id, getRequestIp(request)])
+      })
+    : { allowed: true, retryAfterSeconds: exportRateLimit.windowSeconds };
 
   if (!rateLimit.allowed) {
     await logSecurityEvent(supabase, {

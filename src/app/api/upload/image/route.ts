@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { requireApiAccess } from "@/modules/access-control/access-control.api";
 import { noteIdSchema } from "@/modules/notes/note.schemas";
-import { consumeRateLimit, createRateLimitKey, getRequestIp } from "@/modules/rate-limit/rate-limit.service";
+import { consumeRateLimit, createRateLimitKey, getRequestIp, isRateLimitEnabled } from "@/modules/rate-limit/rate-limit.service";
 import { isSameOriginRequest } from "@/modules/security/csrf";
 import { getSecurityRequestContext, logSecurityEvent } from "@/modules/security/security.repository";
 
@@ -34,13 +34,12 @@ export async function POST(request: NextRequest) {
   }
 
   const { user } = access;
-  const rateLimit =
-    process.env.RATE_LIMIT_ENABLED === "false"
-      ? { allowed: true, retryAfterSeconds: uploadRateLimit.windowSeconds }
-      : await consumeRateLimit(supabase, {
-          ...uploadRateLimit,
-          key: createRateLimitKey([user.id, getRequestIp(request)])
-        });
+  const rateLimit = isRateLimitEnabled(process.env.RATE_LIMIT_ENABLED)
+    ? await consumeRateLimit(supabase, {
+        ...uploadRateLimit,
+        key: createRateLimitKey([user.id, getRequestIp(request)])
+      })
+    : { allowed: true, retryAfterSeconds: uploadRateLimit.windowSeconds };
 
   if (!rateLimit.allowed) {
     await logRejectedUpload("rate_limited", user.id, requestContext, supabase);

@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 import { evaluateAppAccess } from "@/modules/access-control/access-control.service";
-import { consumeRateLimit, createRateLimitKey, getRequestIp } from "@/modules/rate-limit/rate-limit.service";
+import { consumeRateLimit, createRateLimitKey, getRequestIp, isRateLimitEnabled } from "@/modules/rate-limit/rate-limit.service";
 
 const appEntryRateLimit = {
   action: "auth_app_entry",
@@ -55,13 +55,12 @@ export async function updateSession(request: NextRequest) {
     return response;
   }
 
-  const rateLimit =
-    process.env.RATE_LIMIT_ENABLED === "false"
-      ? { allowed: true, retryAfterSeconds: appEntryRateLimit.windowSeconds }
-      : await consumeRateLimit(supabase, {
-          ...appEntryRateLimit,
-          key: createRateLimitKey([getRequestIp(request), pathname])
-        });
+  const rateLimit = isRateLimitEnabled(process.env.RATE_LIMIT_ENABLED)
+    ? await consumeRateLimit(supabase, {
+        ...appEntryRateLimit,
+        key: createRateLimitKey([getRequestIp(request), pathname])
+      })
+    : { allowed: true, retryAfterSeconds: appEntryRateLimit.windowSeconds };
 
   if (!rateLimit.allowed) {
     if (isApiRoute) {
